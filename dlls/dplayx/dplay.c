@@ -1404,7 +1404,6 @@ static HRESULT DP_IF_CreatePlayer
   HRESULT hr = DP_OK;
   lpPlayerData lpPData;
   lpPlayerList lpPList;
-  DWORD dwCreateFlags = 0;
 
   TRACE( "(%p)->(%p,%p,%p,%p,0x%08x,0x%08x,%u)\n",
          This, lpidPlayer, lpPlayerName, hEvent, lpData,
@@ -1431,22 +1430,22 @@ static HRESULT DP_IF_CreatePlayer
       if( *lpidPlayer == DPID_SERVERPLAYER )
       {
         /* Server player for the host interface */
-        dwCreateFlags |= DPLAYI_PLAYER_APPSERVER;
+        dwFlags |= DPLAYI_PLAYER_APPSERVER;
       }
       else if( *lpidPlayer == DPID_NAME_SERVER )
       {
         /* Name server - master of everything */
-        dwCreateFlags |= (DPLAYI_PLAYER_NAMESRVR|DPLAYI_PLAYER_SYSPLAYER);
+        dwFlags |= (DPLAYI_PLAYER_NAMESRVR|DPLAYI_PLAYER_SYSPLAYER);
       }
       else
       {
         /* Server player for a non host interface */
-        dwCreateFlags |= DPLAYI_PLAYER_SYSPLAYER;
+        dwFlags |= DPLAYI_PLAYER_SYSPLAYER;
       }
     }
 
     if( lpMsgHdr == NULL )
-      dwCreateFlags |= DPLAYI_PLAYER_PLAYERLOCAL;
+      dwFlags |= DPLAYI_PLAYER_PLAYERLOCAL;
   }
 
   /* If the name is not specified, we must provide one */
@@ -1459,7 +1458,7 @@ static HRESULT DP_IF_CreatePlayer
     }
     else
     {
-      hr = DP_MSG_SendRequestPlayerId( This, dwCreateFlags, lpidPlayer );
+      hr = DP_MSG_SendRequestPlayerId( This, dwFlags & 0x000000FF, lpidPlayer );
 
       if( FAILED(hr) )
       {
@@ -1483,9 +1482,7 @@ static HRESULT DP_IF_CreatePlayer
 
   }
 
-  /* We pass creation flags, so we can distinguish sysplayers and not count them in the current
-     player total */
-  lpPData = DP_CreatePlayer( This, lpidPlayer, lpPlayerName, dwCreateFlags,
+  lpPData = DP_CreatePlayer( This, lpidPlayer, lpPlayerName, dwFlags,
                              hEvent, bAnsi );
 
   if( lpPData == NULL )
@@ -1516,7 +1513,7 @@ static HRESULT DP_IF_CreatePlayer
     DPSP_CREATEPLAYERDATA data;
 
     data.idPlayer          = *lpidPlayer;
-    data.dwFlags           = dwCreateFlags;
+    data.dwFlags           = dwFlags;
     data.lpSPMessageHeader = lpMsgHdr;
     data.lpISP             = This->dp2->spData.lpISP;
 
