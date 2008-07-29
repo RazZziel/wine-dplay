@@ -713,6 +713,9 @@ HRESULT DP_HandleMessage( IDirectPlay2Impl* This, LPCVOID lpcMessageBody,
       /* TODO remember to set local addr somewhere */
       /*      call NS_SetLocalAddr with a SOCKADDR_IN */
 
+      FIXME( "This should happen after we received all the DPMSGCMD_ADDFORWARDACKs\n" );
+      DP_MSG_ReplyToEnumPlayersRequest( This, lplpReply, lpdwMsgSize );
+
       break;
     }
 
