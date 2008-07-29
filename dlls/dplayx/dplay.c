@@ -675,9 +675,6 @@ HRESULT DP_HandleMessage( IDirectPlay2Impl* This, LPCVOID lpcMessageBody,
 
       *lplpReply = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, *lpdwMsgSize );
 
-      FIXME( "Ignoring Flags 0x%08x in request msg\n", lpcMsg->Flags );
-
-      /* Setup the reply */
       lpReply = (LPDPSP_MSG_REQUESTPLAYERREPLY)( (LPBYTE)(*lplpReply) +
                                                  This->dp2->spData.dwSPHeaderSize );
 
@@ -685,15 +682,78 @@ HRESULT DP_HandleMessage( IDirectPlay2Impl* This, LPCVOID lpcMessageBody,
       lpReply->envelope.wCommandId = DPMSGCMD_REQUESTPLAYERREPLY;
       lpReply->envelope.wVersion   = DX61AVERSION;
 
-      lpReply->ID = DP_NextObjectId();
+      if ( lpcMsg->Flags & DPLAYI_PLAYER_SYSPLAYER )
+      {
+        /* Request to join the game */
 
-      TRACE( "Allocating new playerid 0x%08x from remote request\n",
-             lpReply->ID );
+        if ( This->dp2->lpSessionDesc->dwFlags & DPSESSION_SECURESERVER )
+        {
+          FIXME( "Fill lpReply->SecDesc with Game->SSPIProvider\n" );
+        }
+        FIXME( "Fill lpReply->CAPIProvider with Game->CAPIProvider\n" );
+        FIXME( "Fill lpReply->SecDesc->dwEncryptionAlgorithm with Game->EncryptionAlgorithm\n" );
+
+        /* Player is not local anymore */
+        lpcMsg->Flags ^= DPLAYI_PLAYER_PLAYERLOCAL;
+
+        lpReply->ID = DP_NextObjectId();
+        lpReply->Result = DP_IF_CreatePlayer( This, lpcMessageHeader,
+                                              &lpReply->ID, NULL, 0, NULL, 0,
+                                              lpcMsg->Flags, TRUE/*TODO*/ );
+        lpReply->Result = S_OK;
+      }
+      else
+      {
+        /* Request to to add a normal player from an
+         * existing member of the session */
+
+        if ( ( This->dp2->lpSessionDesc->dwCurrentPlayers
+               == This->dp2->lpSessionDesc->dwMaxPlayers ) ||
+             ( This->dp2->lpSessionDesc->dwFlags & DPSESSION_NEWPLAYERSDISABLED ) )
+        {
+          lpReply->Result = DPERR_NONEWPLAYERS;
+        }
+        else
+        {
+          lpReply->ID = DP_NextObjectId();
+          lpReply->Result = S_OK;
+        }
+      }
 
       break;
     }
 
-    case DPMSGCMD_ADDFORWARD:
+    case DPMSGCMD_PACKET:
+    {
+      LPCDPSP_MSG_PACKET lpcMsg = lpcMessageBody;
+      LPDPSP_MSG_ENVELOPE packetData;
+
+      /* TODO: We have to wait for all the messages in the sequence and
+       *       assemble them in a bigger message. */
+      if ( lpcMsg->TotalPackets > 1 )
+      {
+        FIXME( "TODO: Message belongs to a sequence of %d, implement assembly\n",
+               lpcMsg->TotalPackets );
+        return DPERR_GENERIC;
+      }
+
+      /* For now, for simplicity we'll just decapsulate the embedded
+       * message and work with it. */
+      packetData = (LPVOID)(lpcMsg + 1);
+
+      TRACE( "Processing embedded message with envelope (0x%08x, 0x%08x, %d)\n",
+             packetData->dwMagic, packetData->wCommandId, packetData->wVersion );
+
+      return DP_HandleMessage( This,
+                               packetData,
+                               lpcMsg->DataSize,
+                               lpcMessageHeader,
+                               packetData->wCommandId,
+                               packetData->wVersion,
+                               lplpReply, lpdwMsgSize );
+      break;
+    }
+
     case DPMSGCMD_REQUESTPLAYERREPLY:
     {
       DP_MSG_ReplyReceived( This, wCommandId, lpcMessageBody, dwMessageBodySize );
