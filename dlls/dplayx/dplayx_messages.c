@@ -227,7 +227,7 @@ HRESULT DP_MSG_SendRequestPlayerId( IDirectPlay2AImpl* This, DWORD dwFlags,
 
     TRACE( "Asking for player id w/ Flags 0x%08x\n", lpMsgBody->Flags );
 
-    DP_MSG_ExpectReply( This, &data, DPMSG_DEFAULT_WAIT_TIME, DPMSGCMD_REQUESTPLAYERREPLY,
+    DP_MSG_ExpectReply( This, &data, DPMSG_RELIABLE_API_TIMER, DPMSGCMD_REQUESTPLAYERREPLY,
                         &lpMsg, &dwMsgSize );
   }
 
@@ -285,7 +285,7 @@ HRESULT DP_MSG_ForwardPlayerCreation( IDirectPlay2AImpl* This, DPID dpidServer )
     TRACE( "Sending forward player request with 0x%08x\n", dpidServer );
 
     lpMsg = DP_MSG_ExpectReply( This, &data,
-                                DPMSG_WAIT_60_SECS,
+                                DPMSG_RELIABLE_API_TIMER,
                                 DPMSGCMD_ADDFORWARD,
                                 &lpMsg, &dwMsgSize );
   }

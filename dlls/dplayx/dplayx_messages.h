@@ -46,6 +46,11 @@ void DP_MSG_ErrorReceived( IDirectPlay2AImpl* This, WORD wCommandId,
 #define DPMSG_WAIT_30_SECS 30000
 #define DPMSG_WAIT_60_SECS 60000
 #define DPMSG_DEFAULT_WAIT_TIME DPMSG_WAIT_30_SECS
+#define DPMSG_RELIABLE_API_TIMER     5000
+#define DPMSG_LOGON_TIMER           25000
+#define DPMSG_PACKETIZE_BASE_TIMER    900
+#define DPMSG_PING_TIMER            35000
+#define DPMSG_NAMETABLE_TIMER       15000
 
 /* Message types etc. */
 #include "pshpack1.h"

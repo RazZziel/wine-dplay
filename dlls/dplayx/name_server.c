@@ -319,7 +319,7 @@ void NS_PruneSessionCache( LPVOID lpNSInfo )
   lpNSCache     lpCache = lpNSInfo;
 
   const DWORD dwPresentTime = timeGetTime();
-  const DWORD dwPrunePeriod = DPMSG_WAIT_60_SECS; /* is 60 secs enough? */
+  const DWORD dwPrunePeriod = DPMSG_LOGON_TIMER;
 
   /* This silly little algorithm is based on the fact we keep entries in
    * the queue in a time based order. It also assumes that it is not possible
