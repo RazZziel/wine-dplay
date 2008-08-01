@@ -326,13 +326,17 @@ LPVOID DP_MSG_ExpectReply( IDirectPlay2AImpl* This, LPDPSP_SENDDATA lpData,
   HANDLE                   hMsgReceipt;
   DP_MSG_REPLY_STRUCT_LIST replyStructList;
   DWORD                    dwWaitReturn;
+  WORD                     wCommandId;
 
   /* Setup for receipt */
   hMsgReceipt = DP_MSG_BuildAndLinkReplyStruct( This, &replyStructList,
                                                 wReplyCommandId );
 
-  TRACE( "Sending msg and expecting cmd %u in reply within %u ticks\n",
-         wReplyCommandId, dwWaitTime );
+  wCommandId = ((LPCDPSP_MSG_ENVELOPE)
+                ( ((LPBYTE) lpData->lpMessage) +
+                  This->dp2->spData.dwSPHeaderSize ))->wCommandId;
+  TRACE( "Sending cmd 0x%x and expecting cmd 0x%x in reply within %u ticks\n",
+         wCommandId, wReplyCommandId, dwWaitTime );
   hr = (*This->dp2->spData.lpCB->Send)( lpData );
 
   if( FAILED(hr) )
@@ -364,13 +368,6 @@ void DP_MSG_ReplyReceived( IDirectPlay2AImpl* This, WORD wCommandId,
 {
   LPDP_MSG_REPLY_STRUCT_LIST lpReplyList;
 
-#if 0
-  if( wCommandId == DPMSGCMD_ADDFORWARDREQUEST )
-  {
-    DebugBreak();
-  }
-#endif
-
   /* Find, and immediately remove (to avoid double triggering), the appropriate entry. Call locked to
    * avoid problems.
    */
@@ -393,9 +390,9 @@ void DP_MSG_ReplyReceived( IDirectPlay2AImpl* This, WORD wCommandId,
   }
   else
   {
-    ERR( "No receipt event set - only expecting in reply mode\n" );
-    DebugBreak();
-  }
+    ERR( "No receipt event set for cmd 0x%x, only expecting in reply mode\n",
+         wCommandId );
+  };
 }
 
 DWORD DP_CopyString( LPVOID destination, LPVOID source, BOOL bAnsi )
