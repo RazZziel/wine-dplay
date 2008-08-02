@@ -300,6 +300,127 @@ static HRESULT start_listener( LPDPWS_DATA dpwsData, BOOL is_tcp )
 }
 
 
+static HRESULT send_udp_message( LPVOID      message,
+                                 DWORD       messageSize,
+                                 LPSOCKADDR  destAddr )
+{
+    SOCKET sock;
+    int ret;
+
+    TRACE( "Sending message to %s:%d\n",
+           inet_ntoa(((LPSOCKADDR_IN) destAddr)->sin_addr),
+           ntohs(((LPSOCKADDR_IN) destAddr)->sin_port) );
+
+    if ( messageSize > DPWS_MAXBUFFERSIZE )
+    {
+        return DPERR_SENDTOOBIG;
+    }
+
+    sock = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    if ( sock == INVALID_SOCKET )
+    {
+        ERR( "socket() failed: %d\n", WSAGetLastError() );
+        return DPERR_GENERIC;
+    }
+
+    if ( ((LPSOCKADDR_IN)destAddr)->sin_addr.s_addr == htonl(INADDR_BROADCAST) )
+    {
+        /* Allow the socket to send broadcast messages */
+        BOOL allowBroadcast = TRUE;
+        ret = setsockopt( sock, SOL_SOCKET, SO_BROADCAST,
+                          (char*) &allowBroadcast, sizeof(BOOL) );
+        if ( ret == SOCKET_ERROR )
+        {
+            ERR( "setsockopt() failed: %d\n", WSAGetLastError() );
+            return DPERR_GENERIC;
+        }
+    }
+
+    /* Send message */
+    ret = sendto( sock, message, messageSize, 0, destAddr, sizeof(SOCKADDR) );
+    if ( ret == SOCKET_ERROR )
+    {
+        ERR( "sendto() failed: %d\n", WSAGetLastError() );
+        return DPERR_GENERIC;
+    }
+    else if ( ret != messageSize )
+    {
+        ERR( "%d/%d bytes sent", ret, messageSize );
+        return DPERR_GENERIC;
+    }
+
+    ret = closesocket( sock );
+    if ( ret == SOCKET_ERROR)
+    {
+        ERR( "closesocket() failed %d\n", WSAGetLastError() );
+        return DPERR_GENERIC;
+    }
+
+    return DP_OK;
+}
+
+static HRESULT send_tcp_message( LPVOID      message,
+                                 DWORD       messageSize,
+                                 LPSOCKADDR  destAddr )
+{
+    SOCKET sock;
+    int ret;
+
+    /* TODO:
+     *  For each message sent, we open a TCP socket, send the message and
+     *  close the socket. The desired behaviour would be to open a socket
+     *  only if there's no socket for the requesting address, and keep
+     *  sending messages with that socket, without closing it. */
+
+    TRACE( "Sending message to %s:%d\n",
+           inet_ntoa(((LPSOCKADDR_IN) destAddr)->sin_addr),
+           ntohs(((LPSOCKADDR_IN) destAddr)->sin_port) );
+
+    if ( messageSize > DPWS_GUARANTEED_MAXBUFFERSIZE )
+    {
+        return DPERR_SENDTOOBIG;
+    }
+
+    sock = socket( AF_INET, SOCK_STREAM, IPPROTO_TCP );
+    if ( sock == INVALID_SOCKET )
+    {
+        ERR( "socket() failed: %d\n", WSAGetLastError() );
+        return DPERR_GENERIC;
+    }
+
+    ret = connect( sock, destAddr, sizeof(SOCKADDR) );
+    if ( ret == SOCKET_ERROR )
+    {
+        if ( WSAGetLastError() != WSAEISCONN )
+        {
+            ERR( "connect() failed: %d\n", WSAGetLastError() );
+            return DPERR_GENERIC;
+        }
+    }
+
+    ret = send( sock, message, messageSize, 0 );
+    if ( ret == SOCKET_ERROR )
+    {
+        ERR( "send() failed: %d\n", WSAGetLastError() );
+        return DPERR_GENERIC;
+    }
+    else if ( ret != messageSize )
+    {
+        ERR( "%d/%d bytes sent", ret, messageSize );
+        return DPERR_GENERIC;
+    }
+
+    ret = closesocket( sock );
+    if ( ret == SOCKET_ERROR)
+    {
+        ERR( "closesocket() failed %d\n", WSAGetLastError() );
+        return DPERR_GENERIC;
+    }
+
+    return DP_OK;
+}
+
+
 static HRESULT WINAPI DPWSCB_EnumSessions( LPDPSP_ENUMSESSIONSDATA data )
 {
     FIXME( "(%p,%d,%p,%u) stub\n",
@@ -310,19 +431,93 @@ static HRESULT WINAPI DPWSCB_EnumSessions( LPDPSP_ENUMSESSIONSDATA data )
 
 static HRESULT WINAPI DPWSCB_Reply( LPDPSP_REPLYDATA data )
 {
-    FIXME( "(%p,%p,%d,%d,%p) stub\n",
+    LPDPWS_DATA dpwsData;
+    DWORD dwDataSize;
+    SOCKADDR_IN destAddr;
+
+    TRACE( "(%p,%p,%d,%d,%p)\n",
            data->lpSPMessageHeader, data->lpMessage, data->dwMessageSize,
            data->idNameServer, data->lpISP );
-    return DPERR_UNSUPPORTED;
+
+    IDirectPlaySP_GetSPData( data->lpISP, (LPVOID*) &dpwsData, &dwDataSize,
+                             DPGET_LOCAL );
+
+    /* Extract destination address from request header */
+    destAddr = ((LPDPSP_MSG_HEADER) data->lpSPMessageHeader)->SockAddr;
+
+    /* Add header to message body */
+    ((LPDPSP_MSG_HEADER) data->lpMessage)->mixed
+        = DPSP_MSG_MAKE_MIXED(data->dwMessageSize, DPSP_MSG_TOKEN_REMOTE);
+    ((LPDPSP_MSG_HEADER) data->lpMessage)->SockAddr
+        = dpwsData->tcp_listener.addr;
+
+    return send_tcp_message( data->lpMessage, data->dwMessageSize,
+                             (LPSOCKADDR) &destAddr );
 }
 
 static HRESULT WINAPI DPWSCB_Send( LPDPSP_SENDDATA data )
 {
-    FIXME( "(0x%08x,%d,%d,%p,%d,%u,%p) stub\n",
+    LPDPWS_DATA dpwsData;
+    LPDPWS_PLAYER_DATA dpwsPlayerData;
+    DWORD dwDataSize, dwPlayerDataSize;
+    SOCKADDR_IN destAddr;
+
+    TRACE( "(0x%08x,0x%08x,0x%08x,%p,%d,%u,%p)\n",
            data->dwFlags, data->idPlayerTo, data->idPlayerFrom,
            data->lpMessage, data->dwMessageSize,
            data->bSystemMessage, data->lpISP );
-    return DPERR_UNSUPPORTED;
+
+    IDirectPlaySP_GetSPData( data->lpISP, (LPVOID*) &dpwsData, &dwDataSize,
+                             DPGET_LOCAL );
+
+    /* Get destination address from the player id */
+    if ( data->idPlayerTo == 0 ) /* Message to nameserver */
+    {
+        destAddr = dpwsData->nameserverAddr;
+    }
+    else
+    {
+        HRESULT hr;
+        hr = IDirectPlaySP_GetSPPlayerData( data->lpISP, data->idPlayerTo,
+                                            (LPVOID*) &dpwsPlayerData,
+                                            &dwPlayerDataSize, DPGET_REMOTE );
+        if ( FAILED(hr) )
+        {
+            return hr;
+        }
+
+        if ( ( data->bSystemMessage ) ||
+             ( data->dwFlags & DPSEND_GUARANTEED ) )
+        {
+            destAddr = dpwsPlayerData->tcpAddr;
+        }
+        else
+        {
+            destAddr = dpwsPlayerData->udpAddr;
+        }
+    }
+
+    /* Add header to message body */
+    ((LPDPSP_MSG_HEADER) data->lpMessage)->mixed
+        = DPSP_MSG_MAKE_MIXED(data->dwMessageSize, DPSP_MSG_TOKEN_REMOTE);
+    ((LPDPSP_MSG_HEADER) data->lpMessage)->SockAddr
+        = dpwsData->tcp_listener.addr;
+
+    /* If the flag DPSESSION_DIRECTPLAYPROTOCOL is set we are
+     * supposed to send UDP messages and implement all the TCP
+     * functionality ourselves in dplayx, but for now let's not
+     * reinvent the wheel. */
+    if ( ( data->bSystemMessage ) ||
+         ( data->dwFlags & DPSEND_GUARANTEED ) )
+    {
+        return send_tcp_message( data->lpMessage, data->dwMessageSize,
+                                 (LPSOCKADDR) &destAddr );
+    }
+    else
+    {
+        return send_udp_message( data->lpMessage, data->dwMessageSize,
+                                 (LPSOCKADDR) &destAddr );
+    }
 }
 
 static HRESULT WINAPI DPWSCB_CreatePlayer( LPDPSP_CREATEPLAYERDATA data )
