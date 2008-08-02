@@ -194,7 +194,7 @@ HRESULT DP_MSG_SendRequestPlayerId( IDirectPlay2AImpl* This, DWORD dwFlags,
                                     LPDPID lpdpidAllocatedId )
 {
   LPVOID                     lpMsg;
-  LPDPMSG_REQUESTNEWPLAYERID lpMsgBody;
+  LPDPSP_MSG_REQUESTPLAYERID lpMsgBody;
   DWORD                      dwMsgSize;
   HRESULT                    hr = DP_OK;
 
@@ -202,16 +202,16 @@ HRESULT DP_MSG_SendRequestPlayerId( IDirectPlay2AImpl* This, DWORD dwFlags,
 
   lpMsg = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, dwMsgSize );
 
-  lpMsgBody = (LPDPMSG_REQUESTNEWPLAYERID)( (BYTE*)lpMsg +
-                                             This->dp2->spData.dwSPHeaderSize );
+  lpMsgBody = (LPDPSP_MSG_REQUESTPLAYERID)( (LPBYTE)lpMsg +
+                                            This->dp2->spData.dwSPHeaderSize );
 
   /* Compose dplay message envelope */
-  lpMsgBody->envelope.dwMagic    = DPMSGMAGIC_DPLAYMSG;
-  lpMsgBody->envelope.wCommandId = DPMSGCMD_REQUESTNEWPLAYERID;
-  lpMsgBody->envelope.wVersion   = DPMSGVER_DP6;
+  lpMsgBody->envelope.dwMagic    = DPMSG_SIGNATURE;
+  lpMsgBody->envelope.wCommandId = DPMSGCMD_REQUESTPLAYERID;
+  lpMsgBody->envelope.wVersion   = DX61AVERSION;
 
   /* Compose the body of the message */
-  lpMsgBody->dwFlags = dwFlags;
+  lpMsgBody->Flags = dwFlags;
 
   /* Send the message */
   {
@@ -225,31 +225,22 @@ HRESULT DP_MSG_SendRequestPlayerId( IDirectPlay2AImpl* This, DWORD dwFlags,
     data.bSystemMessage = TRUE; /* Allow reply to be sent */
     data.lpISP          = This->dp2->spData.lpISP;
 
-    TRACE( "Asking for player id w/ dwFlags 0x%08x\n",
-           lpMsgBody->dwFlags );
+    TRACE( "Asking for player id w/ Flags 0x%08x\n", lpMsgBody->Flags );
 
-    DP_MSG_ExpectReply( This, &data, DPMSG_DEFAULT_WAIT_TIME, DPMSGCMD_NEWPLAYERIDREPLY,
+    DP_MSG_ExpectReply( This, &data, DPMSG_DEFAULT_WAIT_TIME, DPMSGCMD_REQUESTPLAYERREPLY,
                         &lpMsg, &dwMsgSize );
   }
 
   /* Need to examine the data and extract the new player id */
   if( SUCCEEDED(hr) )
   {
-    LPCDPMSG_NEWPLAYERIDREPLY lpcReply;
+    LPCDPSP_MSG_REQUESTPLAYERREPLY lpcReply;
 
     lpcReply = lpMsg;
 
-    *lpdpidAllocatedId = lpcReply->dpidNewPlayerId;
+    *lpdpidAllocatedId = lpcReply->ID;
 
-    TRACE( "Received reply for id = 0x%08x\n", lpcReply->dpidNewPlayerId );
-
-    /* FIXME: I think that the rest of the message has something to do
-     *        with remote data for the player that perhaps I need to setup.
-     *        However, with the information that is passed, all that it could
-     *        be used for is a standardized initialization value, which I'm
-     *        guessing we can do without. Unless the message content is the same
-     *        for several different messages?
-     */
+    TRACE( "Received reply for id = 0x%08x\n", lpcReply->ID );
 
     HeapFree( GetProcessHeap(), 0, lpMsg );
   }
@@ -259,86 +250,25 @@ HRESULT DP_MSG_SendRequestPlayerId( IDirectPlay2AImpl* This, DWORD dwFlags,
 
 HRESULT DP_MSG_ForwardPlayerCreation( IDirectPlay2AImpl* This, DPID dpidServer )
 {
-  LPVOID                   lpMsg;
-  LPDPMSG_FORWARDADDPLAYER lpMsgBody;
-  DWORD                    dwMsgSize;
-  HRESULT                  hr = DP_OK;
+  LPVOID                       lpMsg;
+  LPDPSP_MSG_ADDFORWARDREQUEST lpMsgBody;
+  DWORD                        dwMsgSize;
+  HRESULT                      hr = DP_OK;
 
   dwMsgSize = This->dp2->spData.dwSPHeaderSize + sizeof( *lpMsgBody );
 
   lpMsg = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, dwMsgSize );
 
-  lpMsgBody = (LPDPMSG_FORWARDADDPLAYER)( (BYTE*)lpMsg +
-                                          This->dp2->spData.dwSPHeaderSize );
+  lpMsgBody = (LPDPSP_MSG_ADDFORWARDREQUEST)( (LPBYTE)lpMsg +
+                                              This->dp2->spData.dwSPHeaderSize );
 
   /* Compose dplay message envelope */
-  lpMsgBody->envelope.dwMagic    = DPMSGMAGIC_DPLAYMSG;
-  lpMsgBody->envelope.wCommandId = DPMSGCMD_FORWARDADDPLAYER;
-  lpMsgBody->envelope.wVersion   = DPMSGVER_DP6;
-
-#if 0
-  {
-    LPBYTE lpPData;
-    DWORD  dwDataSize;
-
-    /* SP Player remote data needs to be propagated at some point - is this the point? */
-    IDirectPlaySP_GetSPPlayerData( This->dp2->spData.lpISP, 0, &lpPData, &dwDataSize, DPSET_REMOTE );
-
-    ERR( "Player Data size is 0x%08lx\n"
-         "[%02x%02x %02x%02x %02x%02x %02x%02x %02x%02x %02x%02x %02x%02x %02x%02x]\n"
-         "[%02x%02x %02x%02x %02x%02x %02x%02x %02x%02x %02x%02x %02x%02x %02x%02x]\n",
-
-	 dwDataSize,
-         lpPData[0], lpPData[1], lpPData[2], lpPData[3], lpPData[4],
-	 lpPData[5], lpPData[6], lpPData[7], lpPData[8], lpPData[9],
-         lpPData[10], lpPData[11], lpPData[12], lpPData[13], lpPData[14],
-	 lpPData[15], lpPData[16], lpPData[17], lpPData[18], lpPData[19],
-         lpPData[20], lpPData[21], lpPData[22], lpPData[23], lpPData[24],
-	 lpPData[25], lpPData[26], lpPData[27], lpPData[28], lpPData[29],
-         lpPData[30], lpPData[31]
-        );
-    DebugBreak();
-  }
-#endif
+  lpMsgBody->envelope.dwMagic    = DPMSG_SIGNATURE;
+  lpMsgBody->envelope.wCommandId = DPMSGCMD_ADDFORWARDREQUEST;
+  lpMsgBody->envelope.wVersion   = DX61AVERSION;
 
   /* Compose body of message */
-  lpMsgBody->dpidAppServer = dpidServer;
-  lpMsgBody->unknown2[0] = 0x0;
-  lpMsgBody->unknown2[1] = 0x1c;
-  lpMsgBody->unknown2[2] = 0x6c;
-  lpMsgBody->unknown2[3] = 0x50;
-  lpMsgBody->unknown2[4] = 0x9;
-
-  lpMsgBody->dpidAppServer2 = dpidServer;
-  lpMsgBody->unknown3[0] = 0x0;
-  lpMsgBody->unknown3[0] = 0x0;
-  lpMsgBody->unknown3[0] = 0x20;
-  lpMsgBody->unknown3[0] = 0x0;
-  lpMsgBody->unknown3[0] = 0x0;
-
-  lpMsgBody->dpidAppServer3 = dpidServer;
-  lpMsgBody->unknown4[0] =  0x30;
-  lpMsgBody->unknown4[1] =  0xb;
-  lpMsgBody->unknown4[2] =  0x0;
-
-  lpMsgBody->unknown4[3] =  NS_GetNsMagic( This->dp2->lpNameServerData ) -
-                            0x02000000;
-  TRACE( "Setting first magic to 0x%08x\n", lpMsgBody->unknown4[3] );
-
-  lpMsgBody->unknown4[4] =  0x0;
-  lpMsgBody->unknown4[5] =  0x0;
-  lpMsgBody->unknown4[6] =  0x0;
-
-  lpMsgBody->unknown4[7] =  NS_GetNsMagic( This->dp2->lpNameServerData );
-  TRACE( "Setting second magic to 0x%08x\n", lpMsgBody->unknown4[7] );
-
-  lpMsgBody->unknown4[8] =  0x0;
-  lpMsgBody->unknown4[9] =  0x0;
-  lpMsgBody->unknown4[10] = 0x0;
-  lpMsgBody->unknown4[11] = 0x0;
-
-  lpMsgBody->unknown5[0] = 0x0;
-  lpMsgBody->unknown5[1] = 0x0;
+  FIXME( "TODO\n" );
 
   /* Send the message */
   {
@@ -356,7 +286,7 @@ HRESULT DP_MSG_ForwardPlayerCreation( IDirectPlay2AImpl* This, DPID dpidServer )
 
     lpMsg = DP_MSG_ExpectReply( This, &data,
                                 DPMSG_WAIT_60_SECS,
-                                DPMSGCMD_GETNAMETABLEREPLY,
+                                DPMSGCMD_ADDFORWARD,
                                 &lpMsg, &dwMsgSize );
   }
 
@@ -423,7 +353,7 @@ void DP_MSG_ReplyReceived( IDirectPlay2AImpl* This, WORD wCommandId,
   LPDP_MSG_REPLY_STRUCT_LIST lpReplyList;
 
 #if 0
-  if( wCommandId == DPMSGCMD_FORWARDADDPLAYER )
+  if( wCommandId == DPMSGCMD_ADDFORWARDREQUEST )
   {
     DebugBreak();
   }
@@ -454,53 +384,4 @@ void DP_MSG_ReplyReceived( IDirectPlay2AImpl* This, WORD wCommandId,
     ERR( "No receipt event set - only expecting in reply mode\n" );
     DebugBreak();
   }
-}
-
-void DP_MSG_ToSelf( IDirectPlay2AImpl* This, DPID dpidSelf )
-{
-  LPVOID                   lpMsg;
-  LPDPMSG_SENDENVELOPE     lpMsgBody;
-  DWORD                    dwMsgSize;
-
-  dwMsgSize = This->dp2->spData.dwSPHeaderSize + sizeof( *lpMsgBody );
-
-  lpMsg = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, dwMsgSize );
-
-  lpMsgBody = (LPDPMSG_SENDENVELOPE)( (BYTE*)lpMsg +
-                                      This->dp2->spData.dwSPHeaderSize );
-
-  /* Compose dplay message envelope */
-  lpMsgBody->dwMagic    = DPMSGMAGIC_DPLAYMSG;
-  lpMsgBody->wCommandId = DPMSGCMD_JUSTENVELOPE;
-  lpMsgBody->wVersion   = DPMSGVER_DP6;
-
-  /* Send the message to ourselves */
-  {
-    DPSP_SENDDATA data;
-
-    data.dwFlags        = 0;
-    data.idPlayerTo     = dpidSelf; /* Sending to session server */
-    data.idPlayerFrom   = 0; /* Sending from session server */
-    data.lpMessage      = lpMsg;
-    data.dwMessageSize  = dwMsgSize;
-    data.bSystemMessage = TRUE; /* Allow reply to be sent */
-    data.lpISP          = This->dp2->spData.lpISP;
-
-    lpMsg = DP_MSG_ExpectReply( This, &data,
-                                DPMSG_WAIT_5_SECS,
-                                DPMSGCMD_JUSTENVELOPE,
-                                &lpMsg, &dwMsgSize );
-  }
-}
-
-void DP_MSG_ErrorReceived( IDirectPlay2AImpl* This, WORD wCommandId,
-                           LPCVOID lpMsgBody, DWORD dwMsgBodySize )
-{
-  LPCDPMSG_FORWARDADDPLAYERNACK lpcErrorMsg;
-
-  lpcErrorMsg = lpMsgBody;
-
-  ERR( "Received error message %u. Error is %s\n",
-       wCommandId, DPLAYX_HresultToString( lpcErrorMsg->errorCode) );
-  DebugBreak();
 }

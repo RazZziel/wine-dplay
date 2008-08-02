@@ -19,10 +19,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  * NOTES
- *  o DPMSGCMD_ENUMSESSIONSREPLY & DPMSGCMD_ENUMSESSIONSREQUEST
- *    Have most fields understood, but not all.  Everything seems to work.
- *  o DPMSGCMD_REQUESTNEWPLAYERID & DPMSGCMD_NEWPLAYERIDREPLY
- *    Barely works. This needs to be completed for sessions to start.
  *  o A small issue will be the fact that DirectX 6.1(ie. DirectPlay4)
  *    introduces a layer of functionality inside the DP objects which 
  *    provide guaranteed protocol delivery.  This is even if the native

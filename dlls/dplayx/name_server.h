@@ -31,7 +31,7 @@
 void NS_SetLocalComputerAsNameServer( LPCDPSESSIONDESC2 lpsd, LPVOID lpNSInfo );
 void NS_AddRemoteComputerAsNameServer( LPCVOID lpNSAddrHdr,
                                        DWORD dwHdrSize,
-                                       LPCDPMSG_ENUMSESSIONSREPLY lpcMsg,
+                                       LPCDPSP_MSG_ENUMSESSIONSREPLY lpcMsg,
                                        LPVOID lpNSInfo );
 LPVOID NS_GetNSAddr( LPVOID lpNSInfo );
 DWORD NS_GetNsMagic( LPVOID lpNSInfo );

@@ -1646,7 +1646,7 @@ static void test_SessionDesc(void)
 
     if ( hr != DP_OK )
     {
-        skip( "Get/SetSessionDesc not implemented\n" );
+        todo_wine win_skip( "Get/SetSessionDesc not implemented\n" );
         return;
     }
 
@@ -1911,7 +1911,7 @@ static void test_CreatePlayer(void)
 
     if ( hr !=DP_OK )
     {
-        skip( "CreatePlayer not implemented\n" );
+        todo_wine win_skip( "CreatePlayer not implemented\n" );
         return;
     }
 
@@ -2207,7 +2207,7 @@ static void test_PlayerData(void)
 
     if ( dwDataSize != dwDataSizeGet )
     {
-        skip( "GetPlayerData not implemented\n" );
+        todo_wine win_skip( "GetPlayerData not implemented\n" );
         return;
     }
 
@@ -3667,7 +3667,7 @@ static void test_EnumPlayers(void)
 
     if ( 2 != callbackData.dwCounter1 )
     {
-        skip( "EnumPlayers not implemented\n" );
+        todo_wine win_skip( "EnumPlayers not implemented\n" );
         return;
     }
 
@@ -4014,7 +4014,7 @@ static void test_EnumGroups(void)
 
     if ( hr != DP_OK )
     {
-        skip( "not ready yet\n" );
+        todo_wine win_skip( "not ready yet\n" );
         return;
     }
 
@@ -4179,7 +4179,7 @@ static void test_EnumGroupsInGroup(void)
 
     if ( hr != DPERR_INVALIDGROUP )
     {
-        skip( "EnumGroupsInGroup not implemented\n" );
+        todo_wine win_skip( "EnumGroupsInGroup not implemented\n" );
         return;
     }
 
@@ -5993,7 +5993,7 @@ static void test_remote_data_replication(void)
 
     if ( hr != DP_OK )
     {
-        skip( "dplay not implemented enough for this test yet\n" );
+        todo_wine win_skip( "dplay not implemented enough for this test yet\n" );
         return;
     }
 
@@ -6211,7 +6211,7 @@ static void test_host_migration(void)
 
     if ( hr != DP_OK )
     {
-        skip( "dplay not implemented enough for this test yet\n" );
+        todo_wine win_skip( "dplay not implemented enough for this test yet\n" );
         return;
     }
 

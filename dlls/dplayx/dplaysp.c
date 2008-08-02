@@ -434,37 +434,23 @@ static HRESULT WINAPI IDirectPlaySPImpl_HandleMessage
   LPVOID lpMessageHeader
 )
 {
-  LPDPMSG_SENDENVELOPE lpMsg = lpMessageBody;
-  HRESULT hr = DPERR_GENERIC;
-  WORD wCommandId;
-  WORD wVersion;
+  LPDPSP_MSG_ENVELOPE lpMsg = lpMessageBody;
   DPSP_REPLYDATA data;
+  HRESULT hr;
 
   IDirectPlaySPImpl *This = (IDirectPlaySPImpl *)iface;
 
-  FIXME( "(%p)->(%p,0x%08x,%p): mostly stub\n",
+  TRACE( "(%p)->(%p,0x%08x,%p)\n",
          This, lpMessageBody, dwMessageBodySize, lpMessageHeader );
 
-  wCommandId = lpMsg->wCommandId;
-  wVersion   = lpMsg->wVersion;
+  TRACE( "Incoming message has envelope of 0x%08x, 0x%x, %u\n",
+         lpMsg->dwMagic, lpMsg->wCommandId, lpMsg->wVersion );
 
-  TRACE( "Incoming message has envelope of 0x%08x, %u, %u\n",
-         lpMsg->dwMagic, wCommandId, wVersion );
-
-  if( lpMsg->dwMagic != DPMSGMAGIC_DPLAYMSG )
+  if( lpMsg->dwMagic != DPMSG_SIGNATURE )
   {
     ERR( "Unknown magic 0x%08x!\n", lpMsg->dwMagic );
     return DPERR_GENERIC;
   }
-
-#if 0
-  {
-    const LPDWORD lpcHeader = lpMessageHeader;
-
-    TRACE( "lpMessageHeader = [0x%08lx] [0x%08lx] [0x%08lx] [0x%08lx] [0x%08lx]\n",
-           lpcHeader[0], lpcHeader[1], lpcHeader[2], lpcHeader[3], lpcHeader[4] );
-   }
-#endif
 
   /* Pass everything else to Direct Play */
   data.lpMessage     = NULL;
@@ -472,9 +458,8 @@ static HRESULT WINAPI IDirectPlaySPImpl_HandleMessage
 
   /* Pass this message to the dplay interface to handle */
   hr = DP_HandleMessage( This->sp->dplay, lpMessageBody, dwMessageBodySize,
-                         lpMessageHeader, wCommandId, wVersion,
+                         lpMessageHeader, lpMsg->wCommandId, lpMsg->wVersion,
                          &data.lpMessage, &data.dwMessageSize );
-
   if( FAILED(hr) )
   {
     ERR( "Command processing failed %s\n", DPLAYX_HresultToString(hr) );
@@ -496,249 +481,6 @@ static HRESULT WINAPI IDirectPlaySPImpl_HandleMessage
   }
 
   return hr;
-
-#if 0
-  HRESULT hr = DP_OK;
-  HANDLE  hReceiveEvent = 0;
-  /* FIXME: Acquire some sort of interface lock */
-  /* FIXME: Need some sort of context for this callback. Need to determine
-   *        how this is actually done with the SP
-   */
-  /* FIXME: Who needs to delete the message when done? */
-  switch( lpMsg->dwType )
-  {
-    case DPSYS_CREATEPLAYERORGROUP:
-    {
-      LPDPMSG_CREATEPLAYERORGROUP msg = lpMsg;
-
-      if( msg->dwPlayerType == DPPLAYERTYPE_PLAYER )
-      {
-        hr = DP_IF_CreatePlayer( This, lpMessageHeader, msg->dpId,
-                                 &msg->dpnName, 0, msg->lpData,
-                                 msg->dwDataSize, msg->dwFlags, ... );
-      }
-      else if( msg->dwPlayerType == DPPLAYERTYPE_GROUP )
-      {
-        /* Group in group situation? */
-        if( msg->dpIdParent == DPID_NOPARENT_GROUP )
-        {
-          hr = DP_IF_CreateGroup( This, lpMessageHeader, msg->dpId,
-                                  &msg->dpnName, 0, msg->lpData,
-                                  msg->dwDataSize, msg->dwFlags, ... );
-        }
-        else /* Group in Group */
-        {
-          hr = DP_IF_CreateGroupInGroup( This, lpMessageHeader, msg->dpIdParent,
-                                         &msg->dpnName, 0, msg->lpData,
-                                         msg->dwDataSize, msg->dwFlags, ... );
-        }
-      }
-      else /* Hmmm? */
-      {
-        ERR( "Corrupt msg->dwPlayerType for DPSYS_CREATEPLAYERORGROUP\n" );
-        return;
-      }
-
-      break;
-    }
-
-    case DPSYS_DESTROYPLAYERORGROUP:
-    {
-      LPDPMSG_DESTROYPLAYERORGROUP msg = lpMsg;
-
-      if( msg->dwPlayerType == DPPLAYERTYPE_PLAYER )
-      {
-        hr = DP_IF_DestroyPlayer( This, msg->dpId, ... );
-      }
-      else if( msg->dwPlayerType == DPPLAYERTYPE_GROUP )
-      {
-        hr = DP_IF_DestroyGroup( This, msg->dpId, ... );
-      }
-      else /* Hmmm? */
-      {
-        ERR( "Corrupt msg->dwPlayerType for DPSYS_DESTROYPLAYERORGROUP\n" );
-        return;
-      }
-
-      break;
-    }
-
-    case DPSYS_ADDPLAYERTOGROUP:
-    {
-      LPDPMSG_ADDPLAYERTOGROUP msg = lpMsg;
-
-      hr = DP_IF_AddPlayerToGroup( This, msg->dpIdGroup, msg->dpIdPlayer, ... );
-      break;
-    }
-
-    case DPSYS_DELETEPLAYERFROMGROUP:
-    {
-      LPDPMSG_DELETEPLAYERFROMGROUP msg = lpMsg;
-
-      hr = DP_IF_DeletePlayerFromGroup( This, msg->dpIdGroup, msg->dpIdPlayer,
-                                        ... );
-
-      break;
-    }
-
-    case DPSYS_SESSIONLOST:
-    {
-      LPDPMSG_SESSIONLOST msg = lpMsg;
-
-      FIXME( "DPSYS_SESSIONLOST not handled\n" );
-
-      break;
-    }
-
-    case DPSYS_HOST:
-    {
-      LPDPMSG_HOST msg = lpMsg;
-
-      FIXME( "DPSYS_HOST not handled\n" );
-
-      break;
-    }
-
-    case DPSYS_SETPLAYERORGROUPDATA:
-    {
-      LPDPMSG_SETPLAYERORGROUPDATA msg = lpMsg;
-
-      if( msg->dwPlayerType == DPPLAYERTYPE_PLAYER )
-      {
-        hr = DP_IF_SetPlayerData( This, msg->dpId, msg->lpData, msg->dwDataSize,                                  DPSET_REMOTE, ... );
-      }
-      else if( msg->dwPlayerType == DPPLAYERTYPE_GROUP )
-      {
-        hr = DP_IF_SetGroupData( This, msg->dpId, msg->lpData, msg->dwDataSize,
-                                 DPSET_REMOTE, ... );
-      }
-      else /* Hmmm? */
-      {
-        ERR( "Corrupt msg->dwPlayerType for LPDPMSG_SETPLAYERORGROUPDATA\n" );
-        return;
-      }
-
-      break;
-    }
-
-    case DPSYS_SETPLAYERORGROUPNAME:
-    {
-      LPDPMSG_SETPLAYERORGROUPNAME msg = lpMsg;
-
-      if( msg->dwPlayerType == DPPLAYERTYPE_PLAYER )
-      {
-        hr = DP_IF_SetPlayerName( This, msg->dpId, msg->dpnName, ... );
-      }
-      else if( msg->dwPlayerType == DPPLAYERTYPE_GROUP )
-      {
-        hr = DP_IF_SetGroupName( This, msg->dpId, msg->dpnName, ... );
-      }
-      else /* Hmmm? */
-      {
-        ERR( "Corrupt msg->dwPlayerType for LPDPMSG_SETPLAYERORGROUPDATA\n" );
-        return;
-      }
-
-      break;
-    }
-
-    case DPSYS_SETSESSIONDESC;
-    {
-      LPDPMSG_SETSESSIONDESC msg = lpMsg;
-
-      hr = DP_IF_SetSessionDesc( This, &msg->dpDesc );
-
-      break;
-    }
-
-    case DPSYS_ADDGROUPTOGROUP:
-    {
-      LPDPMSG_ADDGROUPTOGROUP msg = lpMsg;
-
-      hr = DP_IF_AddGroupToGroup( This, msg->dpIdParentGroup, msg->dpIdGroup,
-                                  ... );
-
-      break;
-    }
-
-    case DPSYS_DELETEGROUPFROMGROUP:
-    {
-      LPDPMSG_DELETEGROUPFROMGROUP msg = lpMsg;
-
-      hr = DP_IF_DeleteGroupFromGroup( This, msg->dpIdParentGroup,
-                                       msg->dpIdGroup, ... );
-
-      break;
-    }
-
-    case DPSYS_SECUREMESSAGE:
-    {
-      LPDPMSG_SECUREMESSAGE msg = lpMsg;
-
-      FIXME( "DPSYS_SECUREMESSAGE not implemented\n" );
-
-      break;
-    }
-
-    case DPSYS_STARTSESSION:
-    {
-      LPDPMSG_STARTSESSION msg = lpMsg;
-
-      FIXME( "DPSYS_STARTSESSION not implemented\n" );
-
-      break;
-    }
-
-    case DPSYS_CHAT:
-    {
-      LPDPMSG_CHAT msg = lpMsg;
-
-      FIXME( "DPSYS_CHAT not implemeneted\n" );
-
-      break;
-    }
-
-    case DPSYS_SETGROUPOWNER:
-    {
-      LPDPMSG_SETGROUPOWNER msg = lpMsg;
-
-      FIXME( "DPSYS_SETGROUPOWNER not implemented\n" );
-
-      break;
-    }
-
-    case DPSYS_SENDCOMPLETE:
-    {
-      LPDPMSG_SENDCOMPLETE msg = lpMsg;
-
-      FIXME( "DPSYS_SENDCOMPLETE not implemented\n" );
-
-      break;
-    }
-
-    default:
-    {
-      /* NOTE: This should be a user defined type. There is nothing that we
-       *       need to do with it except queue it.
-       */
-      TRACE( "Received user message type(?) 0x%08lx through SP.\n",
-              lpMsg->dwType );
-      break;
-    }
-  }
-
-  FIXME( "Queue message in the receive queue. Need some context data!\n" );
-
-  if( FAILED(hr) )
-  {
-    ERR( "Unable to perform action for msg type 0x%08lx\n", lpMsg->dwType );
-  }
-  /* If a receive event was registered for this player, invoke it */
-  if( hReceiveEvent )
-  {
-    SetEvent( hReceiveEvent );
-  }
-#endif
 }
 
 static HRESULT WINAPI IDirectPlaySPImpl_SetSPPlayerData
