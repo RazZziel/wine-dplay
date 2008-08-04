@@ -202,6 +202,49 @@ LPVOID DP_MSG_CleanReplyStruct( LPDP_MSG_REPLY_STRUCT_LIST lpReplyStructList,
   return lpReplyStructList->replyExpected.lpReplyMsg;
 }
 
+HRESULT DP_MSG_PackMessage( IDirectPlay2AImpl* This, LPVOID* lpMsg,
+                            LPDWORD lpMessageSize )
+{
+  LPVOID lpPacket;
+  LPDPSP_MSG_PACKET lpPacketBody;
+
+  TRACE( "Packing message with command 0x%x\n",
+         ( (LPDPSP_MSG_ENVELOPE)
+           (((LPBYTE) *lpMsg) + This->dp2->spData.dwSPHeaderSize))->wCommandId );
+  FIXME( "TODO: Segment the package if needed\n" );
+
+  lpPacket = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY,
+                        *lpMessageSize + sizeof(DPSP_MSG_PACKET) );
+  lpPacketBody =  (LPDPSP_MSG_PACKET)( (LPBYTE) lpPacket +
+                                       This->dp2->spData.dwSPHeaderSize );
+
+  /* TODO: When do we have to send a DPMSGCMD_PACKET2_DATA? */
+  lpPacketBody->envelope.dwMagic     = DPMSG_SIGNATURE;
+  lpPacketBody->envelope.wCommandId  = DPMSGCMD_PACKET;
+  lpPacketBody->envelope.wVersion    = DX61AVERSION;
+
+  CoCreateGuid( &lpPacketBody->GuidMessage );
+  lpPacketBody->PacketIndex   = 0;
+  lpPacketBody->DataSize      = *lpMessageSize - This->dp2->spData.dwSPHeaderSize;
+  lpPacketBody->Offset        = 0;
+  lpPacketBody->TotalPackets  = 1;
+  lpPacketBody->MessageSize   = *lpMessageSize - This->dp2->spData.dwSPHeaderSize;
+  lpPacketBody->PackedOffset  = 0;
+
+  /* Copy the header of the original message */
+  CopyMemory( lpPacket, *lpMsg, This->dp2->spData.dwSPHeaderSize );
+  /* Copy the body of the original message */
+  CopyMemory( lpPacketBody + 1,
+              ((LPBYTE) *lpMsg) + This->dp2->spData.dwSPHeaderSize,
+              *lpMessageSize - This->dp2->spData.dwSPHeaderSize );
+  *lpMessageSize += sizeof(DPSP_MSG_PACKET);
+
+  HeapFree( GetProcessHeap(), 0, *lpMsg );
+  *lpMsg = lpPacket;
+
+  return DP_OK;
+}
+
 HRESULT DP_MSG_SendRequestPlayerId( IDirectPlay2AImpl* This, DWORD dwFlags,
                                     LPDPID lpdpidAllocatedId )
 {
