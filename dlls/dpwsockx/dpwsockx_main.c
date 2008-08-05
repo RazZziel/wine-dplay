@@ -558,10 +558,78 @@ static HRESULT WINAPI DPWSCB_Send( LPDPSP_SENDDATA data )
 
 static HRESULT WINAPI DPWSCB_CreatePlayer( LPDPSP_CREATEPLAYERDATA data )
 {
-    FIXME( "(%d,0x%08x,%p,%p) stub\n",
+    HRESULT hr;
+    LPDPWS_DATA dpwsData;
+    LPDPWS_PLAYER_DATA lpPlayerData;
+    DWORD dwDataSize, dwPlayerDataSize;
+    DPWS_PLAYER_DATA dpwsPlayerData;
+
+    TRACE( "(%d,0x%08x,%p,%p)\n",
            data->idPlayer, data->dwFlags,
            data->lpSPMessageHeader, data->lpISP );
-    return DPERR_UNSUPPORTED;
+
+    IDirectPlaySP_GetSPData( data->lpISP, (LPVOID*) &dpwsData, &dwDataSize,
+                             DPGET_LOCAL );
+
+    if ( !dpwsData->tcp_listener.is_running )
+    {
+        ERR( "TCP listener was not running\n" );
+        return DPERR_GENERIC;
+    }
+
+    hr = IDirectPlaySP_GetSPPlayerData( data->lpISP, data->idPlayer,
+                                        (LPVOID*) &lpPlayerData,
+                                        &dwPlayerDataSize, DPGET_REMOTE );
+    if ( FAILED(hr) )
+    {
+        return hr;
+    }
+
+    memset( &dpwsPlayerData, 0, sizeof(DPWS_PLAYER_DATA) );
+
+    /* If the player is local, set the local address */
+    if ( data->dwFlags & DPLAYI_PLAYER_PLAYERLOCAL )
+    {
+        dpwsPlayerData.tcpAddr = dpwsData->tcp_listener.addr;
+        dpwsPlayerData.udpAddr = dpwsData->udp_listener.addr;
+        lpPlayerData = &dpwsPlayerData;
+    }
+    /* If player is remote and there's no remote address,
+     * set the address that sent the message that triggered
+     * this event */
+    else if ( lpPlayerData == NULL )
+    {
+        dpwsPlayerData.tcpAddr =
+            ((LPCDPSP_MSG_HEADER) data->lpSPMessageHeader)->SockAddr;
+        dpwsPlayerData.udpAddr = dpwsPlayerData.tcpAddr;
+        lpPlayerData = &dpwsPlayerData;
+    }
+    /* If the player is remote and there's SP data for him,
+     * if the IP address is INADDR_ANY means we're importing a
+     * player from a SUPERENUMPLAYERS message that was local
+     * to the name server, so we can assign him the address
+     * of the sender of the SUPERENUMPLAYERS message, but
+     * keeping the port */
+    else if ( lpPlayerData->tcpAddr.sin_addr.s_addr == htonl(INADDR_ANY) )
+    {
+        lpPlayerData->tcpAddr.sin_addr =
+            ((LPCDPSP_MSG_HEADER) data->lpSPMessageHeader)->SockAddr.sin_addr;
+        lpPlayerData->udpAddr.sin_addr = lpPlayerData->tcpAddr.sin_addr;
+    }
+    /* If the player is remote and already has a valid IP
+     * address, no need to change it */
+    else
+    {
+        lpPlayerData = NULL;
+    }
+
+    if ( lpPlayerData )
+    {
+        IDirectPlaySP_SetSPPlayerData( data->lpISP, data->idPlayer, lpPlayerData,
+                                       sizeof(DPWS_PLAYER_DATA), DPSET_REMOTE );
+    }
+
+    return DP_OK;
 }
 
 static HRESULT WINAPI DPWSCB_DeletePlayer( LPDPSP_DELETEPLAYERDATA data )
