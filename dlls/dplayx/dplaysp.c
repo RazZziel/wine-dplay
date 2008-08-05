@@ -401,30 +401,22 @@ static HRESULT WINAPI IDirectPlaySPImpl_GetSPPlayerData
 
   if( FAILED(hr) )
   {
-    TRACE( "Couldn't get player data: %s\n", DPLAYX_HresultToString(hr) );
-    return DPERR_INVALIDPLAYER;
+    ERR( "Couldn't get player data: %s\n", DPLAYX_HresultToString(hr) );
+    return hr;
   }
 
-  /* What to do in the case where there is nothing set yet? */
   if( dwFlags == DPSET_LOCAL )
   {
-    HeapFree( GetProcessHeap(), 0, lpPlayerData->lpPlayerLocalData );
     *lplpData     = lpPlayerData->lpPlayerLocalData;
     *lpdwDataSize = lpPlayerData->dwPlayerLocalDataSize;
   }
   else if( dwFlags == DPSET_REMOTE )
   {
-    HeapFree( GetProcessHeap(), 0, lpPlayerData->lpPlayerRemoteData );
     *lplpData     = lpPlayerData->lpPlayerRemoteData;
     *lpdwDataSize = lpPlayerData->dwPlayerRemoteDataSize;
   }
 
-  if( *lplpData == NULL )
-  {
-    hr = DPERR_GENERIC;
-  }
-
-  return hr;
+  return DP_OK;
 }
 
 static HRESULT WINAPI IDirectPlaySPImpl_HandleMessage
@@ -497,7 +489,6 @@ static HRESULT WINAPI IDirectPlaySPImpl_SetSPPlayerData
 
   IDirectPlaySPImpl *This = (IDirectPlaySPImpl *)iface;
 
-/*  TRACE( "Called on process 0x%08lx\n", GetCurrentProcessId() ); */
   TRACE( "(%p)->(0x%08x,%p,0x%08x,0x%08x)\n",
          This, idPlayer, lpData, dwDataSize, dwFlags );
 
@@ -511,13 +502,16 @@ static HRESULT WINAPI IDirectPlaySPImpl_SetSPPlayerData
   lpPlayerData = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, dwDataSize );
   CopyMemory( lpPlayerData, lpData, dwDataSize );
 
+  /* If we have data already allocated, free it and replace it */
   if( dwFlags == DPSET_LOCAL )
   {
+    HeapFree( GetProcessHeap(), 0, lpPlayerEntry->lpPlayerLocalData );
     lpPlayerEntry->lpPlayerLocalData = lpPlayerData;
     lpPlayerEntry->dwPlayerLocalDataSize = dwDataSize;
   }
   else if( dwFlags == DPSET_REMOTE )
   {
+    HeapFree( GetProcessHeap(), 0, lpPlayerEntry->lpPlayerRemoteData );
     lpPlayerEntry->lpPlayerRemoteData = lpPlayerData;
     lpPlayerEntry->dwPlayerRemoteDataSize = dwDataSize;
   }
@@ -550,55 +544,23 @@ static HRESULT WINAPI IDirectPlaySPImpl_GetSPData
   DWORD dwFlags
 )
 {
-  HRESULT hr = DP_OK;
   IDirectPlaySPImpl *This = (IDirectPlaySPImpl *)iface;
 
-/*  TRACE( "Called on process 0x%08lx\n", GetCurrentProcessId() ); */
   TRACE( "(%p)->(%p,%p,0x%08x)\n",
          This, lplpData, lpdwDataSize, dwFlags );
 
-#if 0
-  /* This is what the documentation says... */
-  if( dwFlags != DPSET_REMOTE )
-  {
-    return DPERR_INVALIDPARAMS;
-  }
-#else
-  /* ... but most service providers call this with 1 */
-  /* Guess that this is using a DPSET_LOCAL or DPSET_REMOTE type of
-   * thing?
-   */
-  if( dwFlags != DPSET_REMOTE )
-  {
-    TRACE( "Undocumented dwFlags 0x%08x used\n", dwFlags );
-  }
-#endif
-
-  /* FIXME: What to do in the case where this isn't initialized yet? */
-
-  /* Yes, we're supposed to return a pointer to the memory we have stored! */
   if( dwFlags == DPSET_REMOTE )
   {
     *lpdwDataSize = This->sp->dwSpRemoteDataSize;
     *lplpData     = This->sp->lpSpRemoteData;
-
-    if( This->sp->lpSpRemoteData == NULL )
-    {
-      hr = DPERR_GENERIC;
-    }
   }
   else if( dwFlags == DPSET_LOCAL )
   {
     *lpdwDataSize = This->sp->dwSpLocalDataSize;
     *lplpData     = This->sp->lpSpLocalData;
-
-    if( This->sp->lpSpLocalData == NULL )
-    {
-      hr = DPERR_GENERIC;
-    }
   }
 
-  return hr;
+  return DP_OK;
 }
 
 static HRESULT WINAPI IDirectPlaySPImpl_SetSPData
@@ -612,26 +574,8 @@ static HRESULT WINAPI IDirectPlaySPImpl_SetSPData
 
   IDirectPlaySPImpl *This = (IDirectPlaySPImpl *)iface;
 
-/*  TRACE( "Called on process 0x%08lx\n", GetCurrentProcessId() ); */
   TRACE( "(%p)->(%p,%d,0x%08x)\n",
          This, lpData, dwDataSize, dwFlags );
-
-#if 0
-  /* This is what the documentation says... */
-  if( dwFlags != DPSET_REMOTE )
-  {
-    return DPERR_INVALIDPARAMS;
-  }
-#else
-  /* ... but most service providers call this with 1 */
-  /* Guess that this is using a DPSET_LOCAL or DPSET_REMOTE type of
-   * thing?
-   */
-  if( dwFlags != DPSET_REMOTE )
-  {
-    TRACE( "Undocumented dwFlags 0x%08x used\n", dwFlags );
-  }
-#endif
 
   lpSpData = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, dwDataSize );
   CopyMemory( lpSpData, lpData, dwDataSize );
