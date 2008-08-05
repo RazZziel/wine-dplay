@@ -779,10 +779,27 @@ HRESULT DP_HandleMessage( IDirectPlay2Impl* This, LPCVOID lpcMessageBody,
       break;
     }
 
-    case DPMSGCMD_SUPERENUMPLAYERSREPLY:
+    case DPMSGCMD_ADDFORWARDREPLY:
     {
       DP_MSG_ReplyReceived( This, wCommandId, lpcMessageHeader,
                             lpcMessageBody, dwMessageBodySize );
+      break;
+    }
+
+    case DPMSGCMD_ENUMPLAYERSREPLY:
+    case DPMSGCMD_SUPERENUMPLAYERSREPLY:
+    {
+      /* If we're joining a session, when we receive this
+       * command we were waiting for a ADDFORWARDREPLY */
+      if ( !DP_MSG_ReplyReceived( This, DPMSGCMD_ADDFORWARDREPLY,
+                                  lpcMessageHeader, lpcMessageBody,
+                                  dwMessageBodySize ) )
+      {
+        /* If we were not joining a session, check if we are
+         * waiting for an enumeration of players or groups */
+        DP_MSG_ReplyReceived( This, wCommandId, lpcMessageHeader,
+                              lpcMessageBody, dwMessageBodySize );
+      }
       break;
     }
 
