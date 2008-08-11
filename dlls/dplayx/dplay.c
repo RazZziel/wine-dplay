@@ -3128,37 +3128,42 @@ static HRESULT DP_IF_Receive
     return DPERR_UNINITIALIZED;
   }
 
+  if ( ( lpdwDataSize == NULL ) ||
+       ( ( dwFlags & DPRECEIVE_FROMPLAYER ) && ( lpidFrom == NULL ) ) ||
+       ( ( dwFlags & DPRECEIVE_TOPLAYER ) && ( lpidTo == NULL ) ) )
+  {
+    return DPERR_INVALIDPARAMS;
+  }
+
   if( dwFlags == 0 )
   {
     dwFlags = DPRECEIVE_ALL;
   }
 
-  /* If the lpData is NULL, we must be peeking the message */
-  if(  ( lpData == NULL ) &&
-      !( dwFlags & DPRECEIVE_PEEK )
-    )
-  {
-    return DPERR_INVALIDPARAMS;
-  }
-
   if( dwFlags & DPRECEIVE_ALL )
   {
-    lpMsg = This->dp2->receiveMsgs.lpQHFirst;
-
-    if( !( dwFlags & DPRECEIVE_PEEK ) )
-    {
-      FIXME( "Remove from queue\n" );
-    }
-  }
-  else if( ( dwFlags & DPRECEIVE_TOPLAYER ) ||
-           ( dwFlags & DPRECEIVE_FROMPLAYER )
-         )
-  {
-    FIXME( "Find matching message 0x%08x\n", dwFlags );
+    lpMsg = DPQ_FIRST( This->dp2->receiveMsgs );
   }
   else
   {
-    ERR( "Hmmm..dwFlags 0x%08x\n", dwFlags );
+    if ( (lpMsg = DPQ_FIRST( This->dp2->receiveMsgs )) )
+    {
+      do
+      {
+        if ( ( ( dwFlags & DPRECEIVE_FROMPLAYER ) &&
+               ( dwFlags & DPRECEIVE_TOPLAYER )   &&
+               ( lpMsg->idFrom == *lpidFrom )     &&
+               ( lpMsg->idTo == *lpidTo ) )          || /* From & To */
+             ( ( dwFlags & DPRECEIVE_FROMPLAYER ) &&
+               ( lpMsg->idFrom == *lpidFrom ) )      || /* From */
+             ( ( dwFlags & DPRECEIVE_TOPLAYER )   &&
+               ( lpMsg->idTo == *lpidTo ) ) )           /* To */
+        {
+          break;
+        }
+      }
+      while( (lpMsg = DPQ_NEXT( lpMsg->msgs )) );
+    }
   }
 
   if( lpMsg == NULL )
@@ -3166,8 +3171,34 @@ static HRESULT DP_IF_Receive
     return DPERR_NOMESSAGES;
   }
 
+  /* Buffer size check */
+  if ( ( lpData == NULL ) ||
+       ( *lpdwDataSize < lpMsg->dwMsgSize ) )
+  {
+    *lpdwDataSize = lpMsg->dwMsgSize;
+    return DPERR_BUFFERTOOSMALL;
+  }
+
   /* Copy into the provided buffer */
   if (lpData) CopyMemory( lpData, lpMsg->msg, *lpdwDataSize );
+
+  /* Set players */
+  if ( lpidFrom )
+  {
+    *lpidFrom = lpMsg->idFrom;
+  }
+  if ( lpidTo )
+  {
+    *lpidTo = lpMsg->idTo;
+  }
+
+  /* Remove message from queue */
+  if( !( dwFlags & DPRECEIVE_PEEK ) )
+  {
+    HeapFree( GetProcessHeap(), 0, lpMsg->msg );
+    DPQ_REMOVE( This->dp2->receiveMsgs, lpMsg, msgs );
+    HeapFree( GetProcessHeap(), 0, lpMsg );
+  }
 
   return DP_OK;
 }
