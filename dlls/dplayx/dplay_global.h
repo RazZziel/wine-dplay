@@ -242,6 +242,11 @@ HRESULT DP_SetSessionDesc( IDirectPlay2Impl* This,
                            LPCDPSESSIONDESC2 lpSessDesc,
                            DWORD dwFlags, BOOL bInitial,
                            BOOL bAnsi  );
+HRESULT DP_CreatePlayer( IDirectPlay2Impl* This, DPID idPlayer,
+                         LPDPNAME lpName, DWORD dwFlags,
+                         LPVOID lpData, DWORD dwDataSize,
+                         HANDLE hEvent, BOOL bAnsi,
+                         lpPlayerData* lplpPlayer );
 
 /* DP SP external interfaces into DirectPlay */
 extern HRESULT DP_GetSPPlayerData( IDirectPlay2Impl* lpDP, DPID idPlayer, LPVOID* lplpData );

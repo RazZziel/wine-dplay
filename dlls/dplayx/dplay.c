@@ -50,9 +50,6 @@ extern HRESULT DPL_CreateCompoundAddress
 
 
 /* Local function prototypes */
-static lpPlayerData DP_CreatePlayer( IDirectPlay2Impl* iface, LPDPID lpid,
-                                     LPDPNAME lpName, DWORD dwFlags,
-                                     HANDLE hEvent, BOOL bAnsi );
 static BOOL DP_CopyDPNAMEStruct( LPDPNAME lpDst, const DPNAME *lpSrc, BOOL bAnsi );
 static void DP_SetPlayerData( lpPlayerData lpPData, DWORD dwFlags,
                               LPVOID lpData, DWORD dwDataSize );
@@ -1264,52 +1261,137 @@ DP_SetGroupData( lpGroupData lpGData, DWORD dwFlags,
 
 }
 
-/* This function will just create the storage for the new player.  */
-static
-lpPlayerData DP_CreatePlayer( IDirectPlay2Impl* This, LPDPID lpid,
-                              LPDPNAME lpName, DWORD dwFlags,
-                              HANDLE hEvent, BOOL bAnsi )
+
+HRESULT DP_CreatePlayer( IDirectPlay2Impl* This, DPID idPlayer,
+                         LPDPNAME lpName, DWORD dwFlags,
+                         LPVOID lpData, DWORD dwDataSize,
+                         HANDLE hEvent, BOOL bAnsi,
+                         lpPlayerData* lplpPlayer )
 {
-  lpPlayerData lpPData;
+  /* Create the storage for a new player and insert
+   * it in the list of players. */
 
-  TRACE( "(%p)->(%p,%p,%u)\n", This, lpid, lpName, bAnsi );
+  lpPlayerList lpPList = NULL;
+  lpPlayerData lpPlayer;
+  HRESULT hr;
 
-  /* Allocate the storage for the player and associate it with list element */
-  lpPData = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof( *lpPData ) );
-  if( lpPData == NULL )
+  TRACE( "(%p)->(0x%08x,%p,0x%08x,%p,%d,%p,%u,%p)\n",
+         This, idPlayer, lpName, dwFlags, lpData,
+         dwDataSize, hEvent, bAnsi, lplpPlayer );
+
+  /* Verify that we don't already have this player */
+  DPQ_FIND_ENTRY( This->dp2->lpSysGroup->players, players,
+                  lpPData->dpid, ==, idPlayer, lpPList );
+  if ( lpPList != NULL )
   {
-    return NULL;
+    hr = DPERR_CANTCREATEPLAYER;
+    goto end;
   }
 
-  /* Set the desired player ID */
-  lpPData->dpid = *lpid;
+  /* Allocate the storage for the player and associate it with list element */
+  lpPlayer = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof( *lpPlayer ) );
+  if( lpPlayer == NULL )
+  {
+    hr = DPERR_CANTCREATEPLAYER;
+    goto end;
+  }
 
-  DP_CopyDPNAMEStruct( &lpPData->name, lpName, bAnsi );
+  if ( lplpPlayer != NULL )
+  {
+    *lplpPlayer = lpPlayer;
+  }
 
-  lpPData->dwFlags = dwFlags;
+  lpPlayer->dpid = idPlayer;
+  lpPlayer->dwFlags = dwFlags;
+
+  DP_CopyDPNAMEStruct( &lpPlayer->name, lpName, bAnsi );
 
   /* If we were given an event handle, duplicate it */
   if( hEvent != 0 )
   {
     if( !DuplicateHandle( GetCurrentProcess(), hEvent,
-                          GetCurrentProcess(), &lpPData->hEvent,
-                          0, FALSE, DUPLICATE_SAME_ACCESS )
-      )
+                          GetCurrentProcess(), &lpPlayer->hEvent,
+                          0, FALSE, DUPLICATE_SAME_ACCESS ) )
     {
-      /* FIXME: Memory leak */
       ERR( "Can't duplicate player msg handle %p\n", hEvent );
+      hr = DPERR_CANTCREATEPLAYER;
+      goto end;
     }
   }
 
-  /* Initialize the SP data section */
-  lpPData->lpSPPlayerData = DPSP_CreateSPPlayerData();
+  /* Set player data */
+  if ( lpData != NULL )
+  {
+    DP_SetPlayerData( lpPlayer, DPSET_REMOTE, lpData, dwDataSize );
+  }
 
-  TRACE( "Created player id 0x%08x\n", *lpid );
+  /* Initialize the SP data section */
+  lpPlayer->lpSPPlayerData = DPSP_CreateSPPlayerData();
 
   if( ~dwFlags & DPLAYI_PLAYER_SYSPLAYER )
+  {
     This->dp2->lpSessionDesc->dwCurrentPlayers++;
+  }
 
-  return lpPData;
+  /* Create the list object and link it in */
+  lpPList = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof( *lpPList ) );
+  if( lpPList == NULL )
+  {
+    hr = DPERR_CANTADDPLAYER;
+    goto end;
+  }
+
+  lpPlayer->uRef = 1;
+  lpPList->lpPData = lpPlayer;
+
+  /* Add the player to the system group */
+  DPQ_INSERT( This->dp2->lpSysGroup->players, lpPList, players );
+
+  /* Quick hack */
+  if ( ~dwFlags & DPLAYI_PLAYER_PLAYERLOCAL ) {
+    lpPlayerList lpPList;
+    LPDPMSG lpMsg =
+      HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(struct DPMSG) );
+    LPDPMSG_CREATEPLAYERORGROUP msg =
+      HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(DPMSG_CREATEPLAYERORGROUP) );
+
+    msg->dwType            = DPSYS_CREATEPLAYERORGROUP;
+    msg->dwPlayerType      = DPPLAYERTYPE_PLAYER;
+    msg->dpId              = idPlayer;
+    msg->dwCurrentPlayers  = This->dp2->lpSessionDesc->dwCurrentPlayers;
+    msg->lpData            = NULL;/*TODO*/
+    msg->dwDataSize        = 0;/*TODO*/
+    msg->dpIdParent        = DPID_NOPARENT_GROUP;
+    msg->dwFlags           = DPMSG_CREATEPLAYER_DWFLAGS( dwFlags );
+    if ( lpName )
+    {
+      msg->dpnName         = *lpName;
+    }
+
+    lpMsg->msg = (LPDPMSG_GENERIC) msg;
+    lpMsg->dwMsgSize = sizeof(LPDPMSG_CREATEPLAYERORGROUP);
+    DPQ_INSERT( This->dp2->receiveMsgs, lpMsg, msgs );
+
+    if ( (lpPList = DPQ_FIRST( This->dp2->lpSysGroup->players )) )
+    {
+      do
+      {
+        if ( ( lpPList->lpPData->dwFlags & DPLAYI_PLAYER_PLAYERLOCAL ) &&
+             lpPList->lpPData->hEvent )
+        {
+          SetEvent( lpPList->lpPData->hEvent );
+        }
+      }
+      while( (lpPList = DPQ_NEXT( lpPList->players  )) );
+    }
+  }
+
+end:
+  if ( FAILED(hr) )
+  {
+    DP_DeletePlayer( This, idPlayer );
+  }
+  return hr;
 }
 
 /* Delete the contents of the DPNAME struct */
@@ -1497,7 +1579,6 @@ static HRESULT DP_IF_CreatePlayer
 {
   HRESULT hr = DP_OK;
   lpPlayerData lpPData;
-  lpPlayerList lpPList;
 
   TRACE( "(%p)->(%p,%p,%p,%p,0x%08x,0x%08x,%u)\n",
          This, lpidPlayer, lpPlayerName, hEvent, lpData,
@@ -1561,45 +1642,14 @@ static HRESULT DP_IF_CreatePlayer
       }
     }
   }
-  else
+
+  hr = DP_CreatePlayer( This, *lpidPlayer, lpPlayerName, dwFlags,
+                        lpData, dwDataSize, hEvent, bAnsi,
+                        &lpPData );
+  if( FAILED(hr) )
   {
-    /* Verify that we don't already have this player */
-
-    lpPlayerList lpPlayers = NULL;
-    DPQ_FIND_ENTRY( This->dp2->lpSysGroup->players, players,
-                    lpPData->dpid, ==, *lpidPlayer, lpPlayers );
-
-    if (lpPlayers != NULL)
-    {
-      return DPERR_CANTCREATEPLAYER;
-    }
-
+    return hr;
   }
-
-  lpPData = DP_CreatePlayer( This, lpidPlayer, lpPlayerName, dwFlags,
-                             hEvent, bAnsi );
-
-  if( lpPData == NULL )
-  {
-    return DPERR_CANTADDPLAYER;
-  }
-
-  /* Create the list object and link it in */
-  lpPList = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof( *lpPList ) );
-  if( lpPList == NULL )
-  {
-    FIXME( "Memory leak\n" );
-    return DPERR_CANTADDPLAYER;
-  }
-
-  lpPData->uRef = 1;
-  lpPList->lpPData = lpPData;
-
-  /* Add the player to the system group */
-  DPQ_INSERT( This->dp2->lpSysGroup->players, lpPList, players );
-
-  /* Update the information and send it to all players in the session */
-  DP_SetPlayerData( lpPData, DPSET_REMOTE, lpData, dwDataSize );
 
   /* Let the SP know that we've created this player */
   if( This->dp2->spData.lpCB->CreatePlayer )
@@ -1644,45 +1694,22 @@ static HRESULT DP_IF_CreatePlayer
     return hr;
   }
 
-#if 1
-  if( This->dp2->bHostInterface == FALSE )
+
+  if ( ( ! This->dp2->bHostInterface ) && ( lpMsgHdr == NULL ) )
   {
-    /* Let the name server know about the creation of this player */
-    /* FIXME: Is this only to be done for the creation of a server player or
-     *        is this used for regular players? If only for server players, move
-     *        this call to DP_SecureOpen(...);
-     */
-
-    hr = DP_MSG_ForwardPlayerCreation( This, *lpidPlayer);
+     if ( dwFlags & DPLAYI_PLAYER_SYSPLAYER )
+     {
+       /* Let the name server know about the creation of this player,
+        * and  reeceive the name table */
+       hr = DP_MSG_ForwardPlayerCreation( This, *lpidPlayer);
+     }
+     else
+     {
+       /* Inform all other peers of the creation of a new player.
+        * Also, if this was a remote event, no need to rebroadcast it. */
+       hr = DP_MSG_SendCreatePlayer( This, lpPData );
+     }
   }
-#else
-  /* Inform all other peers of the creation of a new player. If there are
-   * no peers keep this quiet.
-   * Also, if this was a remote event, no need to rebroadcast it.
-   */
-  if( ( lpMsgHdr == NULL ) &&
-      This->dp2->lpSessionDesc &&
-      ( This->dp2->lpSessionDesc->dwFlags & DPSESSION_MULTICASTSERVER ) )
-  {
-    DPMSG_CREATEPLAYERORGROUP msg;
-    msg.dwType = DPSYS_CREATEPLAYERORGROUP;
-
-    msg.dwPlayerType     = DPPLAYERTYPE_PLAYER;
-    msg.dpId             = *lpidPlayer;
-    msg.dwCurrentPlayers = 0; /* FIXME: Incorrect */
-    msg.lpData           = lpData;
-    msg.dwDataSize       = dwDataSize;
-    msg.dpnName          = *lpPlayerName;
-    msg.dpIdParent       = DPID_NOPARENT_GROUP;
-    msg.dwFlags          = DPMSG_CREATEPLAYER_DWFLAGS( dwFlags );
-
-    /* FIXME: Correct to just use send effectively? */
-    /* FIXME: Should size include data w/ message or just message "header" */
-    /* FIXME: Check return code */
-    hr = DP_SendEx( This, DPID_SERVERPLAYER, DPID_ALLPLAYERS, 0, &msg,
-                    sizeof( msg ), 0, 0, NULL, NULL, bAnsi );
-  }
-#endif
 
   return hr;
 }

@@ -364,6 +364,124 @@ HRESULT DP_MSG_ForwardPlayerCreation( IDirectPlay2AImpl* This, DPID dpidServer )
   return hr;
 }
 
+HRESULT DP_MSG_SendCreatePlayer( IDirectPlay2AImpl* This, lpPlayerData lpData )
+{
+  LPBYTE                   lpMsg;
+  LPDPSP_MSG_CREATEPLAYER  lpMsgBody;
+  DWORD                    dwMsgSize, dwWrapperSize;
+  HRESULT hr;
+
+  TRACE( "(%p)->(0x%08x)\n", This, lpData->dpid );
+
+
+  /* If the session supports multicast, wrap the message up into
+   * a DPSP_MSG_ASK4MULTICAST */
+  if ( This->dp2->lpSessionDesc->dwFlags & DPSESSION_MULTICASTSERVER )
+  {
+    dwWrapperSize = sizeof(DPSP_MSG_ASK4MULTICAST);
+  }
+  else
+  {
+    dwWrapperSize = 0;
+  }
+
+
+  dwMsgSize = This->dp2->spData.dwSPHeaderSize +
+    dwWrapperSize +
+    sizeof(DPSP_MSG_CREATEPLAYER) +
+    256;                       /* Estimated max size for player data */
+
+  lpMsg = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, dwMsgSize );
+  lpMsgBody = (LPDPSP_MSG_CREATEPLAYER)( lpMsg +
+                                         This->dp2->spData.dwSPHeaderSize +
+                                         dwWrapperSize );
+
+
+  /* Fill wrapper if needed */
+  if ( This->dp2->lpSessionDesc->dwFlags & DPSESSION_MULTICASTSERVER )
+  {
+    LPDPSP_MSG_ASK4MULTICAST lpWrapper = (LPDPSP_MSG_ASK4MULTICAST) lpMsg;
+
+    lpWrapper->envelope.dwMagic    = DPMSG_SIGNATURE;
+    lpWrapper->envelope.wCommandId = DPMSGCMD_CREATEPLAYER;
+    lpWrapper->envelope.wVersion   = DX61AVERSION;
+
+    lpWrapper->GroupTo       = 0; /*TODO*/
+    lpWrapper->PlayerFrom    = lpData->dpid;
+    lpWrapper->MessageOffset = sizeof(DPSP_MSG_ASK4MULTICAST);
+  }
+
+
+  /* Compose dplay message envelope */
+  lpMsgBody->envelope.dwMagic    = DPMSG_SIGNATURE;
+  lpMsgBody->envelope.wCommandId = DPMSGCMD_CREATEPLAYER;
+  lpMsgBody->envelope.wVersion   = DX61AVERSION;
+
+  /* Compose body of message */
+  lpMsgBody->IDTo            = 0;    /* Name server */
+  lpMsgBody->PlayerID        = lpData->dpid;
+  lpMsgBody->GroupID         = 0;    /* Ignored */
+  lpMsgBody->CreateOffset    = sizeof(DPSP_MSG_CREATEPLAYER);
+  lpMsgBody->PasswordOffset  = 0;    /* Ignored */
+
+  /* Add PlayerInfo and recalculation of exact message size */
+  dwMsgSize -= 256;  /* We estimated 256 */
+  dwMsgSize += DP_MSG_FillPackedPlayer(
+    This,
+    (LPDPLAYI_PACKEDPLAYER)(((LPBYTE) lpMsgBody) + lpMsgBody->CreateOffset ),
+    lpData, FALSE, TRUE );
+
+
+  /* If the session supports multicast, send message to the game host */
+  if ( This->dp2->lpSessionDesc->dwFlags & DPSESSION_MULTICASTSERVER )
+  {
+    DPSP_SENDDATA sendData;
+    sendData.dwFlags        = DPSEND_GUARANTEED;
+    sendData.idPlayerTo     = 0;            /* Name server */
+    sendData.idPlayerFrom   = lpData->dpid;
+    sendData.lpMessage      = lpMsg;
+    sendData.dwMessageSize  = dwMsgSize;
+    sendData.bSystemMessage = TRUE;         /* Allow reply to be sent */
+    sendData.lpISP          = This->dp2->spData.lpISP;
+
+    hr = (*This->dp2->spData.lpCB->Send)( &sendData );
+  }
+  /* Otherwise, send the message to each player in the session */
+  else
+  {
+    lpPlayerList lpPList;
+    DPSP_SENDDATA sendData;
+    sendData.dwFlags        = DPSEND_GUARANTEED;
+    sendData.idPlayerFrom   = lpData->dpid;
+    sendData.lpMessage      = lpMsg;
+    sendData.dwMessageSize  = dwMsgSize;
+    sendData.bSystemMessage = TRUE;
+    sendData.lpISP          = This->dp2->spData.lpISP;
+
+    if ( (lpPList = DPQ_FIRST( This->dp2->lpSysGroup->players )) )
+    {
+      do
+      {
+        if ( ( lpPList->lpPData->dwFlags & DPLAYI_PLAYER_SYSPLAYER ) &&
+             ( ~lpPList->lpPData->dwFlags & DPLAYI_PLAYER_PLAYERLOCAL ) )
+        {
+          sendData.idPlayerTo = lpPList->lpPData->dpid;
+          hr = (*This->dp2->spData.lpCB->Send)( &sendData );
+          if ( FAILED(hr) )
+          {
+            ERR( "Failed to send message to 0x%08x\n", sendData.idPlayerTo );
+          }
+        }
+      }
+      while( (lpPList = DPQ_NEXT( lpPList->players )) );
+    }
+
+  }
+
+  HeapFree( GetProcessHeap(), 0, lpMsg );
+  return hr;
+}
+
 /* Queue up a structure indicating that we want a reply of type wReplyCommandId. DPlay does
  * not seem to offer any way of uniquely differentiating between replies of the same type
  * relative to the request sent. There is an implicit assumption that there will be no
