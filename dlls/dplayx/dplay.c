@@ -2154,12 +2154,10 @@ static HRESULT DP_IF_EnumGroupPlayers
   /* Walk the players in this group */
   for( ;; )
   {
-    /* We do not enum the name server or app server as they are of no
+    /* We do not enum any system players as they are of no
      * consequence to the end user.
      */
-    if( ( lpPList->lpPData->dpid != DPID_NAME_SERVER ) &&
-        ( lpPList->lpPData->dpid != DPID_SERVERPLAYER )
-      )
+    if( lpPList->lpPData->dwFlags & DPLAYI_PLAYER_SYSPLAYER )
     {
 
       /* FIXME: Need to add stuff for dwFlags checking */
