@@ -716,6 +716,30 @@ HRESULT DP_HandleMessage( IDirectPlay2Impl* This, LPCVOID lpcMessageBody,
       break;
     }
 
+    case DPMSGCMD_CREATEPLAYER:
+    {
+      LPDPSP_MSG_CREATEPLAYER lpcMsg = lpcMessageBody;
+      LPDPLAYI_PACKEDPLAYER lpPackedPlayer =
+        (LPDPLAYI_PACKEDPLAYER)(((LPBYTE) lpcMsg) + lpcMsg->CreateOffset);
+      PACKEDPLAYERDATA packedPlayerData;
+
+      DP_MSG_ParsePackedPlayer( This,
+                                (LPBYTE) lpPackedPlayer,
+                                &packedPlayerData,
+                                FALSE,
+                                TRUE/*TODO*/ );
+
+      return DP_CreatePlayer( This, lpPackedPlayer->PlayerID,
+                              &packedPlayerData.name,
+                              lpPackedPlayer->Flags,
+                              packedPlayerData.lpPlayerData,
+                              packedPlayerData.dwPlayerDataSize,
+                              NULL, TRUE/*TODO*/, NULL );
+
+      /* TODO send msg to upper layer */
+      break;
+    }
+
     case DPMSGCMD_PACKET:
     {
       LPCDPSP_MSG_PACKET lpcMsg = lpcMessageBody;
