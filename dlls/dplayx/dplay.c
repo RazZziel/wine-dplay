@@ -4744,10 +4744,10 @@ static HRESULT DP_SendEx
             LPVOID lpData, DWORD dwDataSize, DWORD dwPriority, DWORD dwTimeout,
             LPVOID lpContext, LPDWORD lpdwMsgID, BOOL bAnsi )
 {
-  BOOL         bValidDestination = FALSE;
+  lpGroupData  lpGData;
+  BOOL         bSendToGroup;
 
-  FIXME( "(%p)->(0x%08x,0x%08x,0x%08x,%p,0x%08x,0x%08x,0x%08x,%p,%p,%u)"
-         ": stub\n",
+  TRACE( "(%p)->(0x%08x,0x%08x,0x%08x,%p,0x%08x,0x%08x,0x%08x,%p,%p,%u)\n",
          This, idFrom, idTo, dwFlags, lpData, dwDataSize, dwPriority,
          dwTimeout, lpContext, lpdwMsgID, bAnsi );
 
@@ -4763,98 +4763,95 @@ static HRESULT DP_SendEx
 
   /* NOTE: Can't send messages to yourself - this will be trapped in receive */
 
-  /* Verify that the message is being sent from a valid local player. The
-   * from player may be anonymous DPID_UNKNOWN
-   */
-  if( idFrom != DPID_UNKNOWN )
+  /* Check idFrom points to a valid player */
+  if ( DP_FindPlayer( This, idFrom ) == NULL )
   {
-    if( DP_FindPlayer( This, idFrom ) == NULL )
-    {
-      WARN( "INFO: Invalid from player 0x%08x\n", idFrom );
-      return DPERR_INVALIDPLAYER;
-    }
+    ERR( "Invalid from player 0x%08x\n", idFrom );
+    return DPERR_INVALIDPLAYER;
   }
 
-  /* Verify that the message is being sent to a valid player, group or to
-   * everyone. If it's valid, send it to those players.
-   */
+  /* Check idTo: it can be a player or a group */
   if( idTo == DPID_ALLPLAYERS )
   {
-    bValidDestination = TRUE;
-
-    /* See if SP has the ability to multicast. If so, use it */
-    if( This->dp2->spData.lpCB->SendToGroupEx )
-    {
-      FIXME( "Use group sendex to group 0\n" );
-    }
-    else if( This->dp2->spData.lpCB->SendToGroup ) /* obsolete interface */
-    {
-      FIXME( "Use obsolete group send to group 0\n" );
-    }
-    else /* No multicast, multiplicate */
-    {
-      /* Send to all players we know about */
-      FIXME( "Send to all players using EnumPlayersInGroup\n" );
-    }
+    bSendToGroup = TRUE;
+    lpGData = This->dp2->lpSysGroup;
   }
-
-  if( ( !bValidDestination ) &&
-      ( DP_FindPlayer( This, idTo ) != NULL )
-    )
+  else if ( DP_FindPlayer( This, idTo ) )
   {
-    bValidDestination = TRUE;
-
-    /* Have the service provider send this message */
-    /* FIXME: Could optimize for local interface sends */
-    return DP_SP_SendEx( This, dwFlags, lpData, dwDataSize, dwPriority,
-                         dwTimeout, lpContext, lpdwMsgID );
+    bSendToGroup = FALSE;
   }
-
-  if( ( !bValidDestination ) &&
-      ( DP_FindAnyGroup( This, idTo ) != NULL )
-    )
+  else if ( ( lpGData = DP_FindAnyGroup( This, idTo ) ) )
   {
-    bValidDestination = TRUE;
-
-    /* See if SP has the ability to multicast. If so, use it */
-    if( This->dp2->spData.lpCB->SendToGroupEx )
-    {
-      FIXME( "Use group sendex\n" );
-    }
-    else if( This->dp2->spData.lpCB->SendToGroup ) /* obsolete interface */
-    {
-      FIXME( "Use obsolete group send to group\n" );
-    }
-    else /* No multicast, multiplicate */
-    {
-      FIXME( "Send to all players using EnumPlayersInGroup\n" );
-    }
-
-#if 0
-    if( bExpectReply )
-    {
-      DWORD dwWaitReturn;
-
-      This->dp2->hReplyEvent = CreateEventW( NULL, FALSE, FALSE, NULL );
-
-      dwWaitReturn = WaitForSingleObject( hReplyEvent, dwTimeout );
-      if( dwWaitReturn != WAIT_OBJECT_0 )
-      {
-        ERR( "Wait failed 0x%08lx\n", dwWaitReturn );
-      }
-    }
-#endif
-  }
-
-  if( !bValidDestination )
-  {
-    return DPERR_INVALIDPLAYER;
+    bSendToGroup = TRUE;
   }
   else
   {
-    /* FIXME: Should return what the send returned */
-    return DP_OK;
+    return DPERR_INVALIDPLAYER;
   }
+
+  if ( bSendToGroup )
+  {
+#if 0
+    DPSP_SENDTOGROUPEXDATA data;
+
+    data.lpISP         = This->dp2->spData.lpISP;
+    data.dwFlags       = dwFlags;
+    data.idGroupTo     = idTo;
+    data.idPlayerFrom  = idFrom;
+    data.lpSendBuffers = lpData;
+    data.cBuffers      = NULL;
+    data.dwMessageSize = dwDataSize;
+    data.dwPriority    = dwPriority;
+    data.dwTimeout     = dwTimeout;
+    data.lpDPContext   = lpContext;
+    data.lpdwSPMsgID   = lpdwMsgID;
+
+    return (*This->dp2->spData.lpCB->SendToGroupEx)( &data );
+#endif
+    DPSP_SENDDATA data;
+    lpPlayerList lpPList;
+
+    data.dwFlags        = dwFlags;
+    data.idPlayerFrom   = idFrom;
+    data.lpMessage      = lpData;
+    data.dwMessageSize  = dwDataSize;
+    data.bSystemMessage = FALSE;
+    data.lpISP          = This->dp2->spData.lpISP;
+
+    if ( (lpPList = DPQ_FIRST( lpGData->players )) )
+    {
+      do
+      {
+        if ( ~lpPList->lpPData->dwFlags & DPLAYI_PLAYER_PLAYERLOCAL )
+        {
+          data.idPlayerTo = lpPList->lpPData->dpid;
+          (*This->dp2->spData.lpCB->Send)( &data );
+        }
+      }
+      while( (lpPList = DPQ_NEXT( lpPList->players )) );
+    }
+  }
+  else
+  {
+    DPSP_SENDDATA data;
+
+    data.dwFlags        = dwFlags;
+    data.idPlayerFrom   = idFrom;
+    data.idPlayerTo     = idTo;
+    data.lpMessage      = lpData;
+    data.dwMessageSize  = dwDataSize;
+    data.bSystemMessage = FALSE;
+    data.lpISP          = This->dp2->spData.lpISP;
+
+    return (*This->dp2->spData.lpCB->Send)( &data );
+  }
+
+  /* Have the service provider send this message */
+  /*wat?
+    return DP_SP_SendEx( This, dwFlags, lpData, dwDataSize, dwPriority,
+    dwTimeout, lpContext, lpdwMsgID );*/
+
+  return DP_OK;
 }
 
 
