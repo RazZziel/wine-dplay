@@ -755,7 +755,8 @@ HRESULT DP_HandleMessage( IDirectPlay2Impl* This, LPCVOID lpcMessageBody,
 
     case DPMSGCMD_REQUESTPLAYERREPLY:
     {
-      DP_MSG_ReplyReceived( This, wCommandId, lpcMessageBody, dwMessageBodySize );
+      DP_MSG_ReplyReceived( This, wCommandId, lpcMessageHeader,
+                            lpcMessageBody, dwMessageBodySize );
       break;
     }
 
@@ -780,7 +781,8 @@ HRESULT DP_HandleMessage( IDirectPlay2Impl* This, LPCVOID lpcMessageBody,
 
     case DPMSGCMD_SUPERENUMPLAYERSREPLY:
     {
-      DP_MSG_ReplyReceived( This, wCommandId, lpcMessageBody, dwMessageBodySize );
+      DP_MSG_ReplyReceived( This, wCommandId, lpcMessageHeader,
+                            lpcMessageBody, dwMessageBodySize );
       break;
     }
 

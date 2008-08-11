@@ -60,6 +60,7 @@ typedef struct tagDP_MSG_REPLY_STRUCT
 {
   HANDLE hReceipt;
   WORD   wExpectedReply;
+  LPVOID lpReplyHdr;
   LPVOID lpReplyMsg;
   DWORD  dwMsgBodySize;
   /* FIXME: Is the message header required as well? */

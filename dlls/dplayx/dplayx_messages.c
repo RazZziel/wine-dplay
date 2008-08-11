@@ -48,7 +48,8 @@ typedef struct tagMSGTHREADINFO
 static DWORD CALLBACK DPL_MSG_ThreadMain( LPVOID lpContext );
 static LPVOID DP_MSG_ExpectReply( IDirectPlay2AImpl* This, LPDPSP_SENDDATA data,
                                   DWORD dwWaitTime, WORD wReplyCommandId,
-                                  LPVOID* lplpReplyMsg, LPDWORD lpdwMsgBodySize );
+                                  LPVOID* lplpReplyHdr, LPVOID* lplpReplyMsg,
+                                  LPDWORD lpdwMsgBodySize );
 static DWORD DP_MSG_FillSuperPackedPlayer( IDirectPlay2Impl* lpDP,
                                            LPDPLAYI_SUPERPACKEDPLAYER lpPackedPlayer,
                                            LPVOID lpData,
@@ -170,7 +171,8 @@ static HANDLE DP_MSG_BuildAndLinkReplyStruct( IDirectPlay2Impl* This,
                                               LPDP_MSG_REPLY_STRUCT_LIST lpReplyStructList,
                                               WORD wReplyCommandId );
 static LPVOID DP_MSG_CleanReplyStruct( LPDP_MSG_REPLY_STRUCT_LIST lpReplyStructList,
-                                       LPVOID* lplpReplyMsg, LPDWORD lpdwMsgBodySize );
+                                       LPVOID* lplpReplyHdr, LPVOID* lplpReplyMsg,
+                                       LPDWORD lpdwMsgBodySize );
 
 
 static
@@ -179,6 +181,7 @@ HANDLE DP_MSG_BuildAndLinkReplyStruct( IDirectPlay2Impl* This,
 {
   lpReplyStructList->replyExpected.hReceipt       = CreateEventW( NULL, FALSE, FALSE, NULL );
   lpReplyStructList->replyExpected.wExpectedReply = wReplyCommandId;
+  lpReplyStructList->replyExpected.lpReplyHdr     = NULL;
   lpReplyStructList->replyExpected.lpReplyMsg     = NULL;
   lpReplyStructList->replyExpected.dwMsgBodySize  = 0;
 
@@ -192,9 +195,15 @@ HANDLE DP_MSG_BuildAndLinkReplyStruct( IDirectPlay2Impl* This,
 
 static
 LPVOID DP_MSG_CleanReplyStruct( LPDP_MSG_REPLY_STRUCT_LIST lpReplyStructList,
-                                LPVOID* lplpReplyMsg, LPDWORD lpdwMsgBodySize  )
+                                LPVOID* lplpReplyHdr, LPVOID* lplpReplyMsg,
+                                LPDWORD lpdwMsgBodySize  )
 {
   CloseHandle( lpReplyStructList->replyExpected.hReceipt );
+
+  if ( lplpReplyHdr )
+  {
+    *lplpReplyHdr    = lpReplyStructList->replyExpected.lpReplyHdr;
+  }
 
   *lplpReplyMsg    = lpReplyStructList->replyExpected.lpReplyMsg;
   *lpdwMsgBodySize = lpReplyStructList->replyExpected.dwMsgBodySize;
@@ -285,7 +294,7 @@ HRESULT DP_MSG_SendRequestPlayerId( IDirectPlay2AImpl* This, DWORD dwFlags,
     lpMsg = DP_MSG_ExpectReply( This, &data,
                                 DPMSG_RELIABLE_API_TIMER,
                                 DPMSGCMD_REQUESTPLAYERREPLY,
-                                &lpMsg, &dwMsgSize );
+                                NULL, &lpMsg, &dwMsgSize );
   }
 
   /* Examine reply */
@@ -343,7 +352,7 @@ HRESULT DP_MSG_ForwardPlayerCreation( IDirectPlay2AImpl* This, DPID dpidServer )
     lpMsg = DP_MSG_ExpectReply( This, &data,
                                 DPMSG_RELIABLE_API_TIMER,
                                 DPMSGCMD_ADDFORWARD,
-                                &lpMsg, &dwMsgSize );
+                                NULL, &lpMsg, &dwMsgSize );
   }
 
   /* Need to examine the data and extract the new player id */
@@ -364,7 +373,8 @@ HRESULT DP_MSG_ForwardPlayerCreation( IDirectPlay2AImpl* This, DPID dpidServer )
 static
 LPVOID DP_MSG_ExpectReply( IDirectPlay2AImpl* This, LPDPSP_SENDDATA lpData,
                            DWORD dwWaitTime, WORD wReplyCommandId,
-                           LPVOID* lplpReplyMsg, LPDWORD lpdwMsgBodySize )
+                           LPVOID* lplpReplyHdr, LPVOID* lplpReplyMsg,
+                           LPDWORD lpdwMsgBodySize )
 {
   HRESULT                  hr;
   HANDLE                   hMsgReceipt;
@@ -400,15 +410,17 @@ LPVOID DP_MSG_ExpectReply( IDirectPlay2AImpl* This, LPDPSP_SENDDATA lpData,
   }
 
   /* Clean Up */
-  return DP_MSG_CleanReplyStruct( &replyStructList, lplpReplyMsg, lpdwMsgBodySize );
+  return DP_MSG_CleanReplyStruct( &replyStructList, lplpReplyHdr,
+                                  lplpReplyMsg, lpdwMsgBodySize );
 }
 
 /* Determine if there is a matching request for this incoming message and then copy
  * all important data. It is quite silly to have to copy the message, but the documents
  * indicate that a copy is taken. Silly really.
  */
-void DP_MSG_ReplyReceived( IDirectPlay2AImpl* This, WORD wCommandId,
-                           LPCVOID lpcMsgBody, DWORD dwMsgBodySize )
+BOOL DP_MSG_ReplyReceived( IDirectPlay2AImpl* This, WORD wCommandId,
+                           LPCVOID lpcMsgHdr, LPCVOID lpcMsgBody,
+                           DWORD dwMsgBodySize )
 {
   LPDP_MSG_REPLY_STRUCT_LIST lpReplyList;
 
@@ -420,23 +432,29 @@ void DP_MSG_ReplyReceived( IDirectPlay2AImpl* This, WORD wCommandId,
                      ==, wCommandId, lpReplyList );
   LeaveCriticalSection( &This->unk->DP_lock );
 
-  if( lpReplyList != NULL )
+  if( lpReplyList == NULL )
   {
-    lpReplyList->replyExpected.dwMsgBodySize = dwMsgBodySize;
-    lpReplyList->replyExpected.lpReplyMsg = HeapAlloc( GetProcessHeap(),
-                                                       HEAP_ZERO_MEMORY,
-                                                       dwMsgBodySize );
-    CopyMemory( lpReplyList->replyExpected.lpReplyMsg,
-                lpcMsgBody, dwMsgBodySize );
-
-    /* Signal the thread which sent the message that it has a reply */
-    SetEvent( lpReplyList->replyExpected.hReceipt );
+    TRACE( "No receipt event set for cmd 0x%x\n", wCommandId );
+    return FALSE;
   }
-  else
-  {
-    ERR( "No receipt event set for cmd 0x%x, only expecting in reply mode\n",
-         wCommandId );
-  };
+
+  lpReplyList->replyExpected.dwMsgBodySize = dwMsgBodySize;
+  /* TODO: Can we avoid theese allocations? */
+  lpReplyList->replyExpected.lpReplyHdr = HeapAlloc( GetProcessHeap(),
+                                                     HEAP_ZERO_MEMORY,
+                                                     This->dp2->spData.dwSPHeaderSize );
+  lpReplyList->replyExpected.lpReplyMsg = HeapAlloc( GetProcessHeap(),
+                                                     HEAP_ZERO_MEMORY,
+                                                     dwMsgBodySize );
+  CopyMemory( lpReplyList->replyExpected.lpReplyHdr,
+              lpcMsgHdr, This->dp2->spData.dwSPHeaderSize );
+  CopyMemory( lpReplyList->replyExpected.lpReplyMsg,
+              lpcMsgBody, dwMsgBodySize );
+
+  /* Signal the thread which sent the message that it has a reply */
+  SetEvent( lpReplyList->replyExpected.hReceipt );
+
+  return TRUE;
 }
 
 DWORD DP_CopyString( LPVOID destination, LPVOID source, BOOL bAnsi )
