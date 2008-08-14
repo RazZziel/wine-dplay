@@ -50,6 +50,11 @@ static LPVOID DP_MSG_ExpectReply( IDirectPlay2AImpl* This, LPDPSP_SENDDATA data,
                                   DWORD dwWaitTime, WORD wReplyCommandId,
                                   LPVOID* lplpReplyHdr, LPVOID* lplpReplyMsg,
                                   LPDWORD lpdwMsgBodySize );
+static DWORD DP_MSG_ParseSuperPackedPlayer( IDirectPlay2Impl* lpDP,
+                                            LPBYTE lpPackedPlayer,
+                                            LPPACKEDPLAYERDATA lpData,
+                                            BOOL bIsGroup,
+                                            BOOL bAnsi );
 static DWORD DP_MSG_FillSuperPackedPlayer( IDirectPlay2Impl* lpDP,
                                            LPDPLAYI_SUPERPACKEDPLAYER lpPackedPlayer,
                                            LPVOID lpData,
@@ -60,6 +65,13 @@ static DWORD DP_MSG_FillPackedPlayer( IDirectPlay2Impl* lpDP,
                                       LPVOID lpData,
                                       BOOL bIsGroup,
                                       BOOL bAnsi );
+static HRESULT DP_MSG_ParsePlayerEnumeration( IDirectPlay2Impl* lpDP,
+                                              LPBYTE lpMsg,
+                                              LPVOID lpMsgHdr );
+static DWORD DP_MSG_ParseSessionDesc( IDirectPlay2Impl* lpDP,
+                                      LPDPSESSIONDESC2 lpSessionDesc,
+                                      LPWSTR lpszSessionName,
+                                      LPWSTR lpszPassword );
 DWORD DP_CopyString( LPVOID destination, LPVOID source, BOOL bAnsi );
 
 
@@ -605,6 +617,380 @@ DWORD DP_CopyString( LPVOID destination, LPVOID source, BOOL bAnsi )
   }
 
   return dwLength * sizeof(WCHAR);
+}
+
+static DWORD DP_MSG_ParseSuperPackedPlayer( IDirectPlay2Impl* lpDP,
+                                            LPBYTE lpPackedPlayer,
+                                            LPPACKEDPLAYERDATA lpData,
+                                            BOOL bIsGroup,
+                                            BOOL bAnsi )
+{
+  DWORD offset, size;
+
+  ZeroMemory( lpData, sizeof(LPPACKEDPLAYERDATA) );
+  offset = sizeof(DPLAYI_SUPERPACKEDPLAYER);
+
+  /* Player name */
+  lpData->name.dwSize = sizeof(DPNAME);
+
+  /* - Short name */
+  if ( ((LPDPLAYI_SUPERPACKEDPLAYER) lpPackedPlayer)->PlayerInfoMask & SPP_SN )
+  {
+    size = (lstrlenW((LPWSTR) (lpPackedPlayer + offset)) + 1) * sizeof(WCHAR);
+    lpData->name.lpszShortName = (LPWSTR) (lpPackedPlayer + offset);
+    offset += size;
+    if ( bAnsi )
+    {
+      /* lpData->name.lpszShortName and lpData->name.lpszShortNameA point to
+       * the same memory location, but if we're using an ANSI interface we'll
+       * no longer need the wide string version of the name, and the space in
+       * the buffer is always more than enough to allocate the ASCII version. */
+      WideCharToMultiByte( CP_ACP, 0, lpData->name.lpszShortName, -1,
+                           lpData->name.lpszShortNameA,
+                           size/sizeof(WCHAR), NULL, NULL );
+    }
+  }
+  /* - Long name */
+  if ( ((LPDPLAYI_SUPERPACKEDPLAYER) lpPackedPlayer)->PlayerInfoMask & SPP_LN )
+  {
+    size = (lstrlenW((LPWSTR) (lpPackedPlayer + offset)) + 1) * sizeof(WCHAR);
+    lpData->name.lpszLongName = (LPWSTR) (lpPackedPlayer + offset);
+    offset += size;
+    if ( bAnsi )
+    {
+      WideCharToMultiByte( CP_ACP, 0, lpData->name.lpszLongName, -1,
+                           lpData->name.lpszLongNameA,
+                           size/sizeof(WCHAR), NULL, NULL );
+    }
+  }
+
+  /* Player SP data */
+  size = spp_flags2size(
+    ((LPDPLAYI_SUPERPACKEDPLAYER) lpPackedPlayer)->PlayerInfoMask, SPP_SL_OFFSET );
+  if ( size )
+  {
+    CopyMemory( &lpData->dwPlayerSPDataSize,
+                lpPackedPlayer + offset, size );
+    offset += size;
+    lpData->lpPlayerSPData = lpPackedPlayer + offset;
+    offset += lpData->dwPlayerSPDataSize;
+  }
+
+  /* Player data */
+  size = spp_flags2size(
+    ((LPDPLAYI_SUPERPACKEDPLAYER) lpPackedPlayer)->PlayerInfoMask, SPP_PD_OFFSET );
+  if ( size )
+  {
+    CopyMemory( &lpData->dwPlayerDataSize,
+                lpPackedPlayer + offset, size );
+    offset += size;
+    lpData->lpPlayerData = lpPackedPlayer + offset;
+    offset += lpData->dwPlayerDataSize;
+  };
+
+  if ( bIsGroup )
+  {
+    /* Player IDs */
+    size = spp_flags2size(
+      ((LPDPLAYI_SUPERPACKEDPLAYER) lpPackedPlayer)->PlayerInfoMask, SPP_PC_OFFSET );
+    if ( size )
+    {
+      CopyMemory( &lpData->dwPlayerCount,
+                  lpPackedPlayer + offset, size );
+      offset += size;
+      lpData->lpPlayerIDs = (LPDPID) (lpPackedPlayer + offset);
+      offset += lpData->dwPlayerCount * sizeof(DPID);
+    }
+
+    /* Parent ID */
+    if ( ((LPDPLAYI_SUPERPACKEDPLAYER) lpPackedPlayer)->PlayerInfoMask & SPP_PI )
+    {
+      lpData->parentID = (DPID) *(lpPackedPlayer + offset);
+      offset += sizeof(DPID);
+    }
+
+    /* Shortcut IDs */
+    size = spp_flags2size(
+      ((LPDPLAYI_SUPERPACKEDPLAYER) lpPackedPlayer)->PlayerInfoMask, SPP_SC_OFFSET );
+    if ( size )
+    {
+      CopyMemory( &lpData->dwShortcutCount,
+                  lpPackedPlayer + offset, size );
+      offset += size;
+      lpData->lpShortcutIDs = (LPDPID) (lpPackedPlayer + offset);
+      offset += lpData->dwShortcutCount * sizeof(DPID);
+    }
+  }
+
+  return offset;
+}
+
+DWORD DP_MSG_ParsePackedPlayer( IDirectPlay2Impl* lpDP,
+                                LPBYTE lpPackedPlayer,
+                                LPPACKEDPLAYERDATA lpData,
+                                BOOL bIsGroup,
+                                BOOL bAnsi )
+{
+  DWORD offset;
+  LPDPLAYI_PACKEDPLAYER lpPackedPlayerData =
+    (LPDPLAYI_PACKEDPLAYER) lpPackedPlayer;
+
+  ZeroMemory( lpData, sizeof(LPPACKEDPLAYERDATA) );
+  offset = lpPackedPlayerData->FixedSize;
+
+  /* Player name */
+  lpData->name.dwSize = sizeof(DPNAME);
+
+  /* - Short name */
+  if ( lpPackedPlayerData->ShortNameLength )
+  {
+    lpData->name.lpszShortName = (LPWSTR) (lpPackedPlayer + offset);
+    offset += lpPackedPlayerData->ShortNameLength;
+    if ( bAnsi )
+    {
+      WideCharToMultiByte( CP_ACP, 0, lpData->name.lpszShortName, -1,
+                           lpData->name.lpszShortNameA,
+                           lpPackedPlayerData->ShortNameLength/sizeof(WCHAR),
+                           NULL, NULL );
+    }
+  }
+
+  /* - Long name */
+  if ( lpPackedPlayerData->LongNameLength )
+  {
+    lpData->name.lpszLongName = (LPWSTR) (lpPackedPlayer + offset);
+    offset += lpPackedPlayerData->LongNameLength;
+    if ( bAnsi )
+    {
+      WideCharToMultiByte( CP_ACP, 0, lpData->name.lpszLongName, -1,
+                           lpData->name.lpszLongNameA,
+                           lpPackedPlayerData->LongNameLength/sizeof(WCHAR),
+                           NULL, NULL );
+    }
+  }
+
+  /* Player SP data */
+  lpData->dwPlayerSPDataSize = lpPackedPlayerData->ServiceProviderDataSize;
+  if ( lpPackedPlayerData->ServiceProviderDataSize )
+  {
+    lpData->lpPlayerSPData = lpPackedPlayer + offset;
+    offset += lpPackedPlayerData->ServiceProviderDataSize;
+  }
+
+  /* Player data */
+  lpData->dwPlayerDataSize = lpPackedPlayerData->PlayerDataSize;
+  if ( lpPackedPlayerData->PlayerDataSize )
+  {
+    lpData->lpPlayerData = lpPackedPlayer + offset;
+    offset += lpPackedPlayerData->PlayerDataSize;
+  }
+
+  if ( bIsGroup )
+  {
+    /* Parent ID */
+    lpData->parentID = lpPackedPlayerData->ParentID;
+
+    /* Player IDs */
+    lpData->dwPlayerCount = lpPackedPlayerData->NumberOfPlayers;
+    if ( lpPackedPlayerData->NumberOfPlayers )
+    {
+      lpData->lpPlayerIDs = (LPDPID)(lpPackedPlayer + offset);
+      offset += lpPackedPlayerData->NumberOfPlayers;
+    }
+  }
+
+  return offset;
+}
+
+static DWORD DP_MSG_ParseSessionDesc( IDirectPlay2Impl* lpDP,
+                                      LPDPSESSIONDESC2 lpSessionDesc,
+                                      LPWSTR lpszSessionName,
+                                      LPWSTR lpszPassword )
+{
+  /*   The "DPSessionDesc" field of a dplay network message represents a
+   * valid session description but its fields "lpszSessionName" and
+   * "lpszPassword" are set to null, while the actual strings sit after
+   * the session description.
+   *   Theese strings are pointed by lpszSessionName and lpszPassword, which
+   * had to be calculated by the calling functiong adding the fields NameOffset
+   * and PasswordOffset to the base address of the message.
+   *   Since this message buffer won't be used anymore, it's safe to copy this
+   * addresses to the dpSessionDesc struct and call SetSessionDesc in the
+   * calling function, which will copy all the data to a new SessionDesc
+   * struct owned by us.
+   *   If this instance of dplay uses ANSI strings, we will have to transform
+   * the given wide strings, and we can do it in the same buffer, as place will
+   * be more than enough.
+   *
+   * Returns: The addition of the lengths of session name and password strings. */
+
+  DWORD offset, size;
+  BOOL bAnsi = TRUE; /* FIXME: This needs to be in the DPLAY interface */
+
+  offset = 0;
+
+  if ( lpszSessionName )
+  {
+    size = lstrlenW( lpszSessionName ) + 1;
+    lpSessionDesc->lpszSessionName = lpszSessionName;
+    if ( bAnsi )
+    {
+      WideCharToMultiByte( CP_ACP, 0, lpSessionDesc->lpszSessionName, -1,
+                           lpSessionDesc->lpszSessionNameA, size,
+                           NULL, NULL );
+    }
+    offset += size * sizeof(WCHAR);
+  }
+
+  if ( lpszPassword )
+  {
+    size = lstrlenW( lpszPassword ) + 1;
+    lpSessionDesc->lpszPassword = lpszPassword;
+    if ( bAnsi )
+    {
+      WideCharToMultiByte( CP_ACP, 0, lpSessionDesc->lpszPassword, -1,
+                           lpSessionDesc->lpszPasswordA, size,
+                           NULL, NULL );
+    }
+    offset += size * sizeof(WCHAR);
+  }
+
+  return offset;
+
+}
+
+static HRESULT DP_MSG_ParsePlayerEnumeration( IDirectPlay2Impl* lpDP,
+                                              LPBYTE lpMsg,
+                                              LPVOID lpMsgHdr )
+{
+  LPDPSP_MSG_ENUMPLAYERSREPLY lpMsgBody =
+    (LPDPSP_MSG_ENUMPLAYERSREPLY) lpMsg;
+  PACKEDPLAYERDATA packedPlayerData;
+  DWORD offset;
+  HRESULT hr;
+  UINT i;
+  BOOL bAnsi = TRUE; /* FIXME: This needs to be in the DPLAY interface */
+
+  TRACE( "Received %d players, %d groups, %d shortcuts\n",
+         lpMsgBody->PlayerCount, lpMsgBody->GroupCount,
+         lpMsgBody->ShortcutCount );
+
+  offset = sizeof(DPSP_MSG_ENUMPLAYERSREPLY);
+
+  /* Session */
+
+  offset += DP_MSG_ParseSessionDesc( lpDP, &lpMsgBody->DPSessionDesc,
+                                     ( lpMsgBody->NameOffset
+                                       ? (LPWSTR) (lpMsg + lpMsgBody->NameOffset)
+                                       : NULL ),
+                                     ( lpMsgBody->PasswordOffset
+                                       ? (LPWSTR) (lpMsg + lpMsgBody->PasswordOffset)
+                                       : NULL ) );
+
+  /* Reset player counter, as it will be updated as we create players.
+   * Otherwise we can get players counted twice. */
+  lpMsgBody->DPSessionDesc.dwCurrentPlayers = 0;
+
+  hr = DP_SetSessionDesc( lpDP, &lpMsgBody->DPSessionDesc, 0, FALSE, bAnsi );
+
+  TRACE( "Adding session %s, %d/%d\n",
+         debugstr_guid(&lpMsgBody->DPSessionDesc.guidInstance),
+         lpMsgBody->DPSessionDesc.dwCurrentPlayers,
+         lpMsgBody->DPSessionDesc.dwMaxPlayers );
+
+  if ( FAILED(hr) )
+  {
+    ERR( "Invalid session: %s\n", DPLAYX_HresultToString(hr) );
+    return hr;
+  }
+
+  /* Players */
+  for ( i=0; i<lpMsgBody->PlayerCount; i++ )
+  {
+    LPDPLAYI_SUPERPACKEDPLAYER lpPackedPlayer =
+      (LPDPLAYI_SUPERPACKEDPLAYER) (lpMsg + offset);
+
+    ZeroMemory( &packedPlayerData, sizeof(PACKEDPLAYERDATA) );
+
+    if ( lpMsgBody->envelope.wCommandId == DPMSGCMD_ENUMPLAYERSREPLY )
+    {
+      offset += DP_MSG_ParsePackedPlayer( lpDP, (LPBYTE) lpPackedPlayer,
+                                          &packedPlayerData,
+                                          FALSE, bAnsi );
+    }
+    else
+    {
+      offset += DP_MSG_ParseSuperPackedPlayer( lpDP, (LPBYTE) lpPackedPlayer,
+                                               &packedPlayerData,
+                                               FALSE, bAnsi );
+    }
+
+    if ( lpPackedPlayer->Flags & DPLAYI_PLAYER_PLAYERLOCAL )
+    {
+      /* Local players are no local anymore */
+      lpPackedPlayer->Flags ^= DPLAYI_PLAYER_PLAYERLOCAL;
+    }
+
+    TRACE( "Importing player 0x%08x, flags=0x%08x\n",
+           lpPackedPlayer->ID,
+           lpPackedPlayer->Flags );
+
+    hr = DP_CreatePlayer( lpDP, lpPackedPlayer->ID,
+                          &packedPlayerData.name,
+                          lpPackedPlayer->Flags,
+                          packedPlayerData.lpPlayerData,
+                          packedPlayerData.dwPlayerDataSize,
+                          NULL, bAnsi, NULL );
+    if ( FAILED(hr) )
+    {
+      ERR( "Couldn't import player: %s\n", DPLAYX_HresultToString(hr) );
+      continue;
+    }
+
+    hr = IDirectPlaySP_SetSPPlayerData( lpDP->dp2->spData.lpISP,
+                                        lpPackedPlayer->ID,
+                                        packedPlayerData.lpPlayerSPData,
+                                        packedPlayerData.dwPlayerSPDataSize,
+                                        DPSET_REMOTE );
+    if ( FAILED(hr) )
+    {
+      ERR( "Couldn't set SP data: %s\n", DPLAYX_HresultToString(hr) );
+      continue;
+    }
+
+    /* Let the SP know that we've added this player */
+    if( lpDP->dp2->spData.lpCB->CreatePlayer )
+    {
+      DPSP_CREATEPLAYERDATA data;
+
+      data.idPlayer          = lpPackedPlayer->ID;
+      data.dwFlags           = lpPackedPlayer->Flags;
+      data.lpSPMessageHeader = lpMsgHdr;
+      data.lpISP             = lpDP->dp2->spData.lpISP;
+
+      hr = (*lpDP->dp2->spData.lpCB->CreatePlayer)( &data );
+
+      if( FAILED(hr) )
+      {
+        ERR( "Couldn't create player with SP: %s\n", DPLAYX_HresultToString(hr) );
+        continue;
+      }
+    }
+
+  }
+
+  /* Groups */
+  for ( i=0; i<lpMsgBody->GroupCount; i++ )
+  {
+    FIXME( "TODO: parse groups\n" );
+  }
+
+  for ( i=0; i<lpMsgBody->ShortcutCount; i++ )
+  {
+    FIXME( "TODO: parse shortcuts\n" );
+  }
+
+  return DP_OK;
 }
 
 static DWORD DP_MSG_FillSuperPackedPlayer( IDirectPlay2Impl* lpDP,

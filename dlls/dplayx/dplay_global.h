@@ -72,6 +72,24 @@ typedef struct tagDP_MSG_REPLY_STRUCT_LIST
   DP_MSG_REPLY_STRUCT replyExpected;
 } DP_MSG_REPLY_STRUCT_LIST, *LPDP_MSG_REPLY_STRUCT_LIST;
 
+
+
+typedef struct tagPACKEDPLAYERDATA
+{
+  DPNAME  name;
+  DPID    parentID;
+
+  LPVOID  lpPlayerSPData;
+  DWORD   dwPlayerSPDataSize;
+  LPVOID  lpPlayerData;
+  DWORD   dwPlayerDataSize;
+
+  DWORD   dwPlayerCount;
+  LPDPID  lpPlayerIDs;
+  DWORD   dwShortcutCount;
+  LPDPID  lpShortcutIDs;
+} PACKEDPLAYERDATA, *LPPACKEDPLAYERDATA;
+
 struct PlayerData
 {
   /* Individual player information */
