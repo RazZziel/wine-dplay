@@ -327,16 +327,33 @@ HRESULT DP_MSG_SendRequestPlayerId( IDirectPlay2AImpl* This, DWORD dwFlags,
 
 HRESULT DP_MSG_ForwardPlayerCreation( IDirectPlay2AImpl* This, DPID dpidServer )
 {
-  LPVOID                       lpMsg;
+  LPBYTE                       lpMsg, lpReply, lpReplyHdr;
   LPDPSP_MSG_ADDFORWARDREQUEST lpMsgBody;
-  DWORD                        dwMsgSize;
+  DWORD                        dwMsgSize, dwReplySize, offset, tick_count;
+  lpPlayerList                 lpPList;
+  DPSP_SENDDATA                sendData;
   HRESULT                      hr = DP_OK;
 
-  dwMsgSize = This->dp2->spData.dwSPHeaderSize + sizeof( *lpMsgBody );
+  /* Check if player id is valid and get player data */
+  lpPList = DP_FindPlayer( This, dpidServer );
+  if ( lpPList == NULL )
+  {
+    ERR( "Invalid ID 0x%08x\n", dpidServer );
+    return DPERR_GENERIC;
+  }
+
+  dwMsgSize = This->dp2->spData.dwSPHeaderSize +
+    sizeof(DPSP_MSG_ADDFORWARDREQUEST) +
+    256 +                            /* Estimated max size for player data */
+    max( sizeof(WCHAR), /* If password==NULL, we set a null unicode string */
+         DP_CopyString( NULL,
+                        This->dp2->lpSessionDesc->lpszPassword,
+                        TRUE ) ) +   /* Password */
+    sizeof(DWORD);                   /* TickCount */
 
   lpMsg = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, dwMsgSize );
 
-  lpMsgBody = (LPDPSP_MSG_ADDFORWARDREQUEST)( (LPBYTE)lpMsg +
+  lpMsgBody = (LPDPSP_MSG_ADDFORWARDREQUEST)( lpMsg +
                                               This->dp2->spData.dwSPHeaderSize );
 
   /* Compose dplay message envelope */
@@ -345,34 +362,91 @@ HRESULT DP_MSG_ForwardPlayerCreation( IDirectPlay2AImpl* This, DPID dpidServer )
   lpMsgBody->envelope.wVersion   = DX61AVERSION;
 
   /* Compose body of message */
-  FIXME( "TODO\n" );
+  lpMsgBody->IDTo          = 0; /* Name server */
+  lpMsgBody->PlayerID      = dpidServer;
+  lpMsgBody->GroupID       = 0; /* Ignored */
+  lpMsgBody->CreateOffset  = sizeof(DPSP_MSG_ADDFORWARDREQUEST);
 
-  /* Send the message */
+  offset = This->dp2->spData.dwSPHeaderSize + lpMsgBody->CreateOffset;
+
+  /* Player data */
+  offset += DP_MSG_FillPackedPlayer(
+    This, (LPDPLAYI_PACKEDPLAYER)( lpMsg + offset ),
+    lpPList->lpPData, FALSE, TRUE );
+
+  /* Password */
+  lpMsgBody->PasswordOffset = offset;
+  if ( This->dp2->lpSessionDesc->lpszPassword )
   {
-    DPSP_SENDDATA data;
-
-    data.dwFlags        = DPSEND_GUARANTEED;
-    data.idPlayerTo     = 0; /* Name server */
-    data.idPlayerFrom   = dpidServer; /* Sending from session server */
-    data.lpMessage      = lpMsg;
-    data.dwMessageSize  = dwMsgSize;
-    data.bSystemMessage = TRUE; /* Allow reply to be sent */
-    data.lpISP          = This->dp2->spData.lpISP;
-
-    TRACE( "Sending forward player request with 0x%08x\n", dpidServer );
-
-    lpMsg = DP_MSG_ExpectReply( This, &data,
-                                DPMSG_RELIABLE_API_TIMER,
-                                DPMSGCMD_ADDFORWARD,
-                                NULL, &lpMsg, &dwMsgSize );
+    offset += DP_CopyString( lpMsg + offset,
+                             This->dp2->lpSessionDesc->lpszPassword,
+                             TRUE );
+  }
+  else
+  {
+    offset += sizeof(WCHAR); /* Null unicode string */
   }
 
-  /* Need to examine the data and extract the new player id */
-  if( lpMsg != NULL )
+  /* TickCount */
+  tick_count = GetTickCount();
+  CopyMemory( lpMsg + offset, &tick_count, sizeof(DWORD) );
+
+  /* Recalculation of the exact message size */
+  dwMsgSize = offset + sizeof(DWORD);
+
+  /* Send the message and wait for reply */
+  sendData.dwFlags        = DPSEND_GUARANTEED;
+  sendData.idPlayerTo     = 0;          /* Name server */
+  sendData.idPlayerFrom   = dpidServer; /* Sending from session server */
+  sendData.lpMessage      = lpMsg;
+  sendData.dwMessageSize  = dwMsgSize;
+  sendData.bSystemMessage = TRUE;       /* Allow reply to be sent */
+  sendData.lpISP          = This->dp2->spData.lpISP;
+
+  TRACE( "Sending forward player request for id 0x%08x\n", dpidServer );
+
+  dwReplySize = 2048;
+  lpReply = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, dwReplySize );
+
+  DP_MSG_ExpectReply( This, &sendData,
+                      DPMSG_RELIABLE_API_TIMER,
+                      DPMSGCMD_ADDFORWARDREPLY,
+                      (LPVOID*) &lpReplyHdr,
+                      (LPVOID*) &lpReply, &dwReplySize );
+
+  /* Examine reply */
+  if( lpReply )
   {
-    FIXME( "Name Table reply received: stub\n" );
+    switch( ((LPDPSP_MSG_ENVELOPE) lpReply)->wCommandId )
+    {
+      case DPMSGCMD_ADDFORWARDREPLY:
+      {
+        hr = ((LPDPSP_MSG_ADDFORWARDREPLY) lpReply)->Error;
+        TRACE( "Received error code %s\n", DPLAYX_HresultToString(hr) );
+        break;
+      }
+      case DPMSGCMD_SUPERENUMPLAYERSREPLY:
+      {
+        TRACE( "Received player enumeration\n" );
+        hr = DP_MSG_ParsePlayerEnumeration( This, lpReply, lpReplyHdr );
+        break;
+      }
+      default:
+      {
+        ERR( "Unknown reply with cmd 0x%x\n",
+             ((LPDPSP_MSG_ENVELOPE) lpReply)->wCommandId );
+        hr = DPERR_GENERIC;
+      }
+    }
+  }
+  else
+  {
+    ERR( "Didn't receive reply\n" );
+    hr = DPERR_GENERIC;
   }
 
+  HeapFree( GetProcessHeap(), 0, lpMsg );
+  HeapFree( GetProcessHeap(), 0, lpReply );
   return hr;
 }
 
