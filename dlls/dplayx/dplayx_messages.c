@@ -239,24 +239,25 @@ HRESULT DP_MSG_SendRequestPlayerId( IDirectPlay2AImpl* This, DWORD dwFlags,
 
     TRACE( "Asking for player id w/ Flags 0x%08x\n", lpMsgBody->Flags );
 
-    DP_MSG_ExpectReply( This, &data, DPMSG_RELIABLE_API_TIMER, DPMSGCMD_REQUESTPLAYERREPLY,
-                        &lpMsg, &dwMsgSize );
+    lpMsg = DP_MSG_ExpectReply( This, &data,
+                                DPMSG_RELIABLE_API_TIMER,
+                                DPMSGCMD_REQUESTPLAYERREPLY,
+                                &lpMsg, &dwMsgSize );
   }
 
-  /* Need to examine the data and extract the new player id */
-  if( SUCCEEDED(hr) )
+  /* Examine reply */
+  if( lpMsg )
   {
-    LPCDPSP_MSG_REQUESTPLAYERREPLY lpcReply;
-
-    lpcReply = lpMsg;
-
-    *lpdpidAllocatedId = lpcReply->ID;
-
-    TRACE( "Received reply for id = 0x%08x\n", lpcReply->ID );
-
-    HeapFree( GetProcessHeap(), 0, lpMsg );
+    *lpdpidAllocatedId = ((LPCDPSP_MSG_REQUESTPLAYERREPLY) lpMsg)->ID;
+    TRACE( "Received new id 0x%08x\n", *lpdpidAllocatedId );
+  }
+  else
+  {
+    ERR( "Didn't receive reply\n" );
+    hr = DPERR_GENERIC;
   }
 
+  HeapFree( GetProcessHeap(), 0, lpMsg );
   return hr;
 }
 
