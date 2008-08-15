@@ -423,10 +423,46 @@ static HRESULT send_tcp_message( LPVOID      message,
 
 static HRESULT WINAPI DPWSCB_EnumSessions( LPDPSP_ENUMSESSIONSDATA data )
 {
-    FIXME( "(%p,%d,%p,%u) stub\n",
+    LPDPWS_DATA dpwsData;
+    DWORD dwDataSize;
+    SOCKADDR_IN destAddr;
+
+    TRACE( "(%p,%d,%p,%u)\n",
            data->lpMessage, data->dwMessageSize,
            data->lpISP, data->bReturnStatus );
-    return DPERR_UNSUPPORTED;
+
+    IDirectPlaySP_GetSPData( data->lpISP, (LPVOID*) &dpwsData, &dwDataSize,
+                             DPGET_LOCAL );
+
+    /* Start listener to get replies if it's not started yet.
+     * This needs to be done before we build the local address,
+     * otherwise we won't know in which port we're listening. */
+    if ( !dpwsData->tcp_listener.is_running )
+    {
+        HRESULT hr = start_listener( dpwsData, TRUE );
+        if ( FAILED(hr) )
+        {
+            return hr;
+        }
+    }
+
+    /* Destination address */
+    /* TODO: Instead of getting always the broadcast address,
+     * we should throw a popup message asking for an address,
+     * and only broadcast if no address is provided. */
+    memset( &destAddr, 0, sizeof(SOCKADDR_IN) );
+    destAddr.sin_family = AF_INET;
+    destAddr.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+    destAddr.sin_port = htons(DPWS_DPLAYSRV_PORT);
+
+    /* Add header to message body */
+    ((LPDPSP_MSG_HEADER) data->lpMessage)->mixed
+        = DPSP_MSG_MAKE_MIXED(data->dwMessageSize, DPSP_MSG_TOKEN_REMOTE);
+    ((LPDPSP_MSG_HEADER) data->lpMessage)->SockAddr
+        = dpwsData->tcp_listener.addr;
+
+    return send_udp_message( data->lpMessage, data->dwMessageSize,
+                             (LPSOCKADDR) &destAddr );
 }
 
 static HRESULT WINAPI DPWSCB_Reply( LPDPSP_REPLYDATA data )
