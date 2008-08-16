@@ -1429,16 +1429,6 @@ static HRESULT DP_IF_CreatePlayer
       dwCreateFlags |= DPLAYI_PLAYER_PLAYERLOCAL;
   }
 
-  /* Verify we know how to handle all the flags */
-  if( !( ( dwFlags & DPPLAYER_SERVERPLAYER ) ||
-         ( dwFlags & DPPLAYER_SPECTATOR )
-       )
-    )
-  {
-    /* Assume non fatal failure */
-    ERR( "unknown dwFlags = 0x%08x\n", dwFlags );
-  }
-
   /* If the name is not specified, we must provide one */
   if( *lpidPlayer == DPID_UNKNOWN )
   {
