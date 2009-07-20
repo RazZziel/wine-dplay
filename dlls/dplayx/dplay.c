@@ -1322,11 +1322,19 @@ static BOOL DP_CopyDPNAMEStruct( LPDPNAME lpDst, const DPNAME *lpSrc, BOOL bAnsi
                                              strlen(lpSrc->u1.lpszShortNameA)+1 );
         strcpy( lpDst->u1.lpszShortNameA, lpSrc->u1.lpszShortNameA );
     }
+    else
+    {
+        lpDst->u1.lpszShortNameA = NULL;
+    }
     if( lpSrc->u2.lpszLongNameA )
     {
         lpDst->u2.lpszLongNameA = HeapAlloc( GetProcessHeap(), 0,
                                               strlen(lpSrc->u2.lpszLongNameA)+1 );
         strcpy( lpDst->u2.lpszLongNameA, lpSrc->u2.lpszLongNameA );
+    }
+    else
+    {
+        lpDst->u2.lpszLongNameA = NULL;
     }
   }
   else
@@ -1337,11 +1345,19 @@ static BOOL DP_CopyDPNAMEStruct( LPDPNAME lpDst, const DPNAME *lpSrc, BOOL bAnsi
                                               (strlenW(lpSrc->u1.lpszShortName)+1)*sizeof(WCHAR) );
         strcpyW( lpDst->u1.lpszShortName, lpSrc->u1.lpszShortName );
     }
+    else
+    {
+        lpDst->u1.lpszShortNameA = NULL;
+    }
     if( lpSrc->u2.lpszLongNameA )
     {
         lpDst->u2.lpszLongName = HeapAlloc( GetProcessHeap(), 0,
                                              (strlenW(lpSrc->u2.lpszLongName)+1)*sizeof(WCHAR) );
         strcpyW( lpDst->u2.lpszLongName, lpSrc->u2.lpszLongName );
+    }
+    else
+    {
+        lpDst->u2.lpszLongNameA = NULL;
     }
   }
 
