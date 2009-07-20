@@ -54,6 +54,252 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 }
 
 
+
+static DWORD WINAPI udp_listener_thread( LPVOID lpParameter )
+{
+    LPDPWS_THREADDATA listener = lpParameter;
+    int recvMsgSize;
+    char buff[4096];
+    SOCKADDR_IN clientAddr;
+    int clientAddrSize;
+
+    listener->is_running = TRUE;
+
+    TRACE( "listening on port %d\n", ntohs(listener->addr.sin_port) );
+
+    for ( ;; )
+    {
+        clientAddrSize = sizeof(clientAddr);
+
+        /* Listen for messages */
+        recvMsgSize = recvfrom( listener->sock, buff, sizeof(buff), 0,
+                                (LPSOCKADDR) &clientAddr, &clientAddrSize );
+
+        if ( recvMsgSize == 0 )
+        {
+            TRACE( "recvfrom(): connection closed\n" );
+        }
+        else if ( recvMsgSize == SOCKET_ERROR )
+        {
+            ERR( "recvfrom() failed: %d\n", WSAGetLastError() );
+        }
+        else
+        {
+            TRACE( "Handling message from %s:%d size %d\n",
+                   inet_ntoa(clientAddr.sin_addr),
+                   ntohs(clientAddr.sin_port),
+                   recvMsgSize );
+
+            /* Copy client address to the header of the message, needed if
+             * we need to send a reply */
+            ((LPDPSP_MSG_HEADER) buff)->SockAddr.sin_addr = clientAddr.sin_addr;
+
+            /* Send messages to the upper layer */
+            IDirectPlaySP_HandleMessage( listener->lpISP,
+                                         buff + sizeof(DPSP_MSG_HEADER),
+                                         recvMsgSize - sizeof(DPSP_MSG_HEADER),
+                                         buff );
+        }
+    }
+
+    listener->is_running = FALSE;
+    return 0;
+}
+
+static DWORD WINAPI tcp_listener_thread( LPVOID lpParameter )
+{
+    LPDPWS_THREADDATA listener = lpParameter;
+    int recvMsgSize;
+    char buff[4096];
+    SOCKADDR_IN clientAddr;
+    SOCKET clientSock;
+    int clientAddrSize;
+    int ret;
+
+    listener->is_running = TRUE;
+
+    TRACE( "listening on port %d\n", ntohs(listener->addr.sin_port) );
+
+    for ( ;; )
+    {
+        clientAddrSize = sizeof(clientAddr);
+
+        /* Waiting for clients */
+        clientSock = accept( listener->sock, (LPSOCKADDR) &clientAddr,
+                             &clientAddrSize );
+        if ( clientSock == INVALID_SOCKET )
+        {
+            ERR( "accept() failed: %d\n", WSAGetLastError() );
+            break;
+        }
+
+        TRACE( "Handling client %s:%d\n",
+               inet_ntoa(clientAddr.sin_addr),
+               ntohs(clientAddr.sin_port) );
+
+
+        recvMsgSize = recv( clientSock, buff, sizeof(buff), 0 );
+
+        if ( recvMsgSize == 0 )
+        {
+            TRACE( "recv(): connection closed\n" );
+        }
+        else if ( recvMsgSize == SOCKET_ERROR )
+        {
+            ERR( "recv() failed: %d\n", WSAGetLastError() );
+        }
+        else
+        {
+            TRACE( "Handling message from %s:%d size %d\n",
+                   inet_ntoa(clientAddr.sin_addr),
+                   ntohs(clientAddr.sin_port),
+                   recvMsgSize );
+
+            /* Copy client address to the header of the message, needed if
+             * we need to send a reply */
+            ((LPDPSP_MSG_HEADER) buff)->SockAddr.sin_addr = clientAddr.sin_addr;
+
+            /* Send messages to the upper layer */
+            IDirectPlaySP_HandleMessage( listener->lpISP,
+                                         buff + sizeof(DPSP_MSG_HEADER),
+                                         recvMsgSize - sizeof(DPSP_MSG_HEADER),
+                                         buff );
+        }
+
+        ret = closesocket( clientSock );
+        if ( ret == SOCKET_ERROR)
+        {
+            ERR( "closesocket() failed %d\n", WSAGetLastError() );
+            break;
+        }
+    }
+
+    listener->is_running = FALSE;
+    return 0;
+}
+
+static HRESULT start_dplaysrv( LPDPWS_DATA dpwsData )
+{
+    LPDPWS_THREADDATA listener = &dpwsData->dplaysrv;
+    int ret;
+
+    if ( listener->is_running )
+    {
+        TRACE( "Thread already started\n" );
+        return DP_OK;
+    }
+
+    listener->lpISP = dpwsData->lpISP;
+
+    /* Setting up a socket listening for UDP broadcasts on port 47624 */
+    /* TODO: With this implementation, if a second application tries to
+     * create a session on the same machine, it will fail.
+     * The native dplay approach is to run a program, dplaysvr.exe,
+     * that is actually who listens on this port. On time we should move
+     * to that kind of implementation. */
+
+    listener->sock = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    if ( listener->sock == INVALID_SOCKET )
+    {
+        ERR( "socket() failed: %d\n", WSAGetLastError() );
+        return DPERR_GENERIC;
+    }
+
+    memset( &listener->addr, 0, sizeof(SOCKADDR_IN) );
+    listener->addr.sin_family = AF_INET;
+    listener->addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    listener->addr.sin_port = htons(DPWS_DPLAYSRV_PORT);
+
+    ret = bind( listener->sock, (LPSOCKADDR) &listener->addr,
+                sizeof(listener->addr) );
+    if ( ret == SOCKET_ERROR )
+    {
+        ERR( "bind() failed: %d\n", WSAGetLastError() );
+        return DPERR_GENERIC;
+    }
+
+    /* Launch thread */
+    listener->handle = CreateThread( NULL, 0, udp_listener_thread,
+                                     listener, 0, NULL );
+    return DP_OK;
+}
+
+static HRESULT start_listener( LPDPWS_DATA dpwsData, BOOL is_tcp )
+{
+    LPDPWS_THREADDATA listener;
+    int port, ret;
+
+    listener = ( is_tcp
+                 ? &dpwsData->tcp_listener
+                 : &dpwsData->udp_listener );
+
+    if ( listener->is_running )
+    {
+        TRACE( "[%s] Thread already started\n", is_tcp ? "TCP" : "UDP" );
+        return DP_OK;
+    }
+
+    listener->lpISP = dpwsData->lpISP;
+
+    /* Setting up a socket listening for TCP or UDP connections
+     * on port 2300-2400 */
+
+    listener->sock = socket( AF_INET,
+                             is_tcp ? SOCK_STREAM : SOCK_DGRAM,
+                             is_tcp ? IPPROTO_TCP : IPPROTO_UDP );
+    if ( listener->sock == INVALID_SOCKET )
+    {
+        ERR( "[%s] socket() failed: %d\n",
+             is_tcp ? "TCP" : "UDP", WSAGetLastError() );
+        return DPERR_GENERIC;
+    }
+
+    memset( &listener->addr, 0, sizeof(SOCKADDR_IN) );
+    listener->addr.sin_family = AF_INET;
+    listener->addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    /* Look for an available port */
+    port = DPWS_PORT_RANGE_START;
+    do
+    {
+        listener->addr.sin_port = htons(port);
+        ret = bind( listener->sock, (LPSOCKADDR) &listener->addr,
+                    sizeof(listener->addr) );
+    }
+    while ( ( ret == SOCKET_ERROR ) &&
+            ( WSAGetLastError() == WSAEADDRINUSE ) &&
+            ( ++port <= DPWS_PORT_RANGE_END ) );
+
+    if ( ret == SOCKET_ERROR )
+    {
+        ERR( "[%s] bind() failed: %d\n",
+             is_tcp ? "TCP" : "UDP",  WSAGetLastError() );
+        return DPERR_GENERIC;
+    }
+
+    TRACE( "[%s] found available port %d\n", is_tcp ? "TCP" : "UDP", port );
+
+    if ( is_tcp )
+    {
+        ret = listen( listener->sock, SOMAXCONN );
+        if ( ret == SOCKET_ERROR )
+        {
+            ERR( "[%s] listen() failed: %d\n",
+                 is_tcp ? "TCP" : "UDP", WSAGetLastError() );
+            return DPERR_GENERIC;
+        }
+    }
+
+    /* Launch thread */
+    listener->handle = CreateThread( NULL, 0,
+                                     ( is_tcp
+                                       ? tcp_listener_thread
+                                       : udp_listener_thread ),
+                                     listener, 0, NULL );
+    return DP_OK;
+}
+
+
 static HRESULT WINAPI DPWSCB_EnumSessions( LPDPSP_ENUMSESSIONSDATA data )
 {
     FIXME( "(%p,%d,%p,%u) stub\n",
@@ -136,10 +382,47 @@ static HRESULT WINAPI DPWSCB_GetCaps( LPDPSP_GETCAPSDATA data )
 
 static HRESULT WINAPI DPWSCB_Open( LPDPSP_OPENDATA data )
 {
-    FIXME( "(%u,%p,%p,%u,0x%08x,0x%08x) stub\n",
+    LPDPWS_DATA dpwsData;
+    DWORD dwDataSize;
+    HRESULT hr;
+
+    TRACE( "(%u,%p,%p,%u,0x%08x,0x%08x)\n",
            data->bCreate, data->lpSPMessageHeader, data->lpISP,
            data->bReturnStatus, data->dwOpenFlags, data->dwSessionFlags );
-    return DPERR_UNSUPPORTED;
+
+    IDirectPlaySP_GetSPData( data->lpISP, (LPVOID*) &dpwsData, &dwDataSize,
+                             DPGET_LOCAL );
+
+    if ( data->bCreate )
+    {
+        hr = start_dplaysrv( dpwsData );
+        if ( FAILED(hr) )
+        {
+            return hr;
+        }
+
+        hr = start_listener( dpwsData, TRUE );
+        if ( FAILED(hr) )
+        {
+            return hr;
+        }
+    }
+    else
+    {
+        /* Save address of name server */
+        dpwsData->nameserverAddr =
+            ((LPDPSP_MSG_HEADER) data->lpSPMessageHeader)->SockAddr;
+    }
+
+    /* TCP listener was already started in EnumConnections */
+
+    hr = start_listener( dpwsData, FALSE );
+    if ( FAILED(hr) )
+    {
+        return hr;
+    }
+
+    return DP_OK;
 }
 
 static HRESULT WINAPI DPWSCB_CloseEx( LPDPSP_CLOSEDATA data )
