@@ -26,6 +26,22 @@
 #include "wine/dplaysp.h"
 
 
+#define DPWS_MAXQUEUESIZE             0
+#define DPWS_HUNDREDBAUD              0
+#define DPWS_LATENCY                  500
+#define DPWS_MAXLOCALPLAYERS          65536
+#define DPWS_TIMEOUT                  5000
+#define DPWS_MAXBUFFERSIZE            65507
+#define DPWS_MAXPLAYERS               65536
+#define DPWS_GUARANTEED_MAXBUFFERSIZE 1048575
+#define DPWS_GUARANTEED_MAXPLAYERS    64
+
+#define DPWS_PORT_RANGE_START 2300
+#define DPWS_PORT_RANGE_END   2400
+#define DPWS_DPLAYSRV_PORT    47624
+
+
+
 typedef struct tagDPWS_THREADDATA
 {
     BOOL           is_running;
