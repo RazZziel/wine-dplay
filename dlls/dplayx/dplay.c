@@ -2562,6 +2562,7 @@ static HRESULT DP_IF_GetPlayerCaps
           ( IDirectPlay2Impl* This, DPID idPlayer, LPDPCAPS lpDPCaps,
             DWORD dwFlags )
 {
+  HRESULT hr;
   DPSP_GETCAPSDATA data;
 
   TRACE("(%p)->(0x%08x,%p,0x%08x)\n", This, idPlayer, lpDPCaps, dwFlags);
@@ -2582,7 +2583,12 @@ static HRESULT DP_IF_GetPlayerCaps
   data.lpCaps   = lpDPCaps;
   data.lpISP    = This->dp2->spData.lpISP;
 
-  return (*This->dp2->spData.lpCB->GetCaps)( &data );
+  hr = (*This->dp2->spData.lpCB->GetCaps)( &data );
+
+  /* Substract size of DirectPlay header */
+  data.lpCaps->dwMaxBufferSize -= sizeof(DPSP_MSG_ENVELOPE);
+
+  return hr;
 }
 
 static HRESULT DP_IF_GetCaps
