@@ -871,7 +871,7 @@ static HRESULT WINAPI IDirectPlaySPImpl_SetSPData
   IDirectPlaySPImpl *This = (IDirectPlaySPImpl *)iface;
 
 /*  TRACE( "Called on process 0x%08lx\n", GetCurrentProcessId() ); */
-  TRACE( "(%p)->(%p,0x%08x,0x%08x)\n",
+  TRACE( "(%p)->(%p,%d,0x%08x)\n",
          This, lpData, dwDataSize, dwFlags );
 
 #if 0
