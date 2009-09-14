@@ -425,10 +425,38 @@ static HRESULT WINAPI DPWSCB_Open( LPDPSP_OPENDATA data )
     return DP_OK;
 }
 
+static HRESULT stop_listener(LPDPWS_THREADDATA listener)
+{
+    int ret;
+
+    if ( listener->is_running )
+    {
+        ret = closesocket( listener->sock );
+        if ( ret == SOCKET_ERROR )
+        {
+            ERR( "closesocket() failed %d\n", WSAGetLastError() );
+            return DPERR_GENERIC;
+        }
+    }
+
+    return DP_OK;
+}
+
 static HRESULT WINAPI DPWSCB_CloseEx( LPDPSP_CLOSEDATA data )
 {
-    FIXME( "(%p) stub\n", data->lpISP );
-    return DPERR_UNSUPPORTED;
+    LPDPWS_DATA dpwsData;
+    DWORD dwDataSize;
+
+    TRACE( "(%p)\n", data->lpISP );
+
+    IDirectPlaySP_GetSPData( data->lpISP, (LPVOID*) &dpwsData, &dwDataSize,
+                             DPGET_LOCAL );
+
+    stop_listener( &dpwsData->tcp_listener );
+    stop_listener( &dpwsData->udp_listener );
+    stop_listener( &dpwsData->dplaysrv );
+
+    return DP_OK;
 }
 
 static HRESULT WINAPI DPWSCB_ShutdownEx( LPDPSP_SHUTDOWNDATA data )
