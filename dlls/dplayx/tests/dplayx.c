@@ -1128,7 +1128,7 @@ static void test_Open(void)
     dpsd.guidApplication = appGuid;
     dpsd.guidInstance = appGuid;
 
-
+printf("1----------------\n");
     hr = IDirectPlayX_Open( pDP, &dpsd, DPOPEN_JOIN );
     checkHR( DPERR_NOSESSIONS, hr );
     hr = IDirectPlayX_Open( pDP, &dpsd, DPOPEN_JOIN | DPOPEN_CREATE );
@@ -1136,14 +1136,14 @@ static void test_Open(void)
 
     dpsd_server.dwFlags = 0;
 
-
+printf("2----------------\n");
     /* Join to normal session */
     hr = IDirectPlayX_Open( pDP_server, &dpsd_server, DPOPEN_CREATE );
-    checkHR( DP_OK, hr );
-
+    checkHR( DP_OK, hr );exit(1);
+printf("25----------------\n");
     IDirectPlayX_EnumSessions( pDP, &dpsd, 0, EnumSessions_cb2, pDP, 0 );
 
-
+printf("3----------------\n");
     /* Already initialized session */
     hr = IDirectPlayX_Open( pDP_server, &dpsd_server, DPOPEN_CREATE );
     checkHR( DPERR_ALREADYINITIALIZED, hr );
@@ -1151,7 +1151,7 @@ static void test_Open(void)
 
     /* Checking which is the error checking order */
     dpsd_server.dwSize = 0;
-
+printf("4----------------\n");
     hr = IDirectPlayX_Open( pDP_server, &dpsd_server, DPOPEN_CREATE );
     checkHR( DPERR_INVALIDPARAMS, hr );
 

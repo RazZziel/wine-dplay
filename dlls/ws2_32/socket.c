@@ -2676,7 +2676,7 @@ int WINAPI WS_recvfrom(SOCKET s, char *buf, INT len, int flags,
 
     wsabuf.len = len;
     wsabuf.buf = buf;
-
+    
     if ( WSARecvFrom(s, &wsabuf, 1, &n, &dwFlags, from, fromlen, NULL, NULL) == SOCKET_ERROR )
         return SOCKET_ERROR;
     else

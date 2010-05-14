@@ -44,7 +44,6 @@
 
 typedef struct tagDPWS_THREADDATA
 {
-    BOOL           is_running;
     SOCKET         sock;
     SOCKADDR_IN    addr;
     HANDLE         handle;

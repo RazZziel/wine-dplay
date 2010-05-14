@@ -3506,6 +3506,15 @@ HRESULT DP_SetSessionDesc
   TRACE( "(%p)->(%p,0x%08x,%u,%u)\n",
          This, lpSessDesc, dwFlags, bInitial, bAnsi );
 
+  /* Illegal combinations of flags */
+  if ( ( lpSessDesc->dwFlags & DPSESSION_MIGRATEHOST ) &&
+       ( lpSessDesc->dwFlags & ( DPSESSION_CLIENTSERVER |
+                                 DPSESSION_MULTICASTSERVER |
+                                 DPSESSION_SECURESERVER ) ) )
+  {
+    return DPERR_INVALIDFLAGS;
+  }
+
   /* FIXME: Copy into This->dp2->lpSessionDesc */
   dwRequiredSize = DP_CalcSessionDescSize( lpSessDesc, bAnsi );
   lpTempSessDesc = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, dwRequiredSize );
@@ -3556,15 +3565,6 @@ static HRESULT WINAPI DirectPlay2AImpl_SetSessionDesc
   if( dwFlags || (lpSessDesc == NULL) )
   {
     return DPERR_INVALIDPARAMS;
-  }
-
-  /* Illegal combinations of flags */
-  if ( ( lpSessDesc->dwFlags & DPSESSION_MIGRATEHOST ) &&
-       ( lpSessDesc->dwFlags & ( DPSESSION_CLIENTSERVER |
-                                 DPSESSION_MULTICASTSERVER |
-                                 DPSESSION_SECURESERVER ) ) )
-  {
-    return DPERR_INVALIDFLAGS;
   }
 
   /* Only the host is allowed to update the session desc */

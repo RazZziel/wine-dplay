@@ -20,6 +20,9 @@
 #include "config.h"
 
 #include <stdarg.h>
+#ifdef HAVE_POLL_H
+#include <poll.h>
+#endif
 
 #include "windef.h"
 #include "winbase.h"
@@ -62,26 +65,53 @@ static DWORD WINAPI udp_listener_thread( LPVOID lpParameter )
     char buff[4096];
     SOCKADDR_IN clientAddr;
     int clientAddrSize;
-
-    listener->is_running = TRUE;
+    struct pollfd fdr;
+    struct fd_set fds;
+    int ret;
 
     TRACE( "listening on port %d\n", ntohs(listener->addr.sin_port) );
+
+    fdr.fd = listener->sock;
+    fdr.events = POLLIN;
+
+    FD_ZERO(&fds);
+    FD_SET(listener->sock, &fds);
 
     for ( ;; )
     {
         clientAddrSize = sizeof(clientAddr);
 
         /* Listen for messages */
+        /* ERR(">>>>>>>>list\n"); */
+        /* ret = poll( &fdr, 1, -1 ); */
+        /* ret = select( 1, &fds, NULL, NULL, NULL ); */
+        /* ERR(">>>>>>>>pene\n"); */
+        /* if ( ret == SOCKET_ERROR ) */
+        /* { */
+        /*     ERR(">cona %d\n",WSAGetLastError()); */
+        /* } */
+        /* else */
+        /* { */
+        /*     ERR(">%d\n",ret); */
+        /* } */
         recvMsgSize = recvfrom( listener->sock, buff, sizeof(buff), 0,
                                 (LPSOCKADDR) &clientAddr, &clientAddrSize );
-
+        ERR(">>>>>>>>listed\n");
         if ( recvMsgSize == 0 )
         {
             TRACE( "recvfrom(): connection closed\n" );
         }
         else if ( recvMsgSize == SOCKET_ERROR )
         {
-            ERR( "recvfrom() failed: %d\n", WSAGetLastError() );
+            if ( WSAGetLastError() == WSAEBADF )
+            {
+                TRACE( "UDP listener terminated\n" );
+            }
+            else
+            {
+                ERR( "recvfrom() failed: %d\n", WSAGetLastError() );
+                exit(1);
+            }
         }
         else
         {
@@ -102,8 +132,7 @@ static DWORD WINAPI udp_listener_thread( LPVOID lpParameter )
         }
     }
 
-    listener->is_running = FALSE;
-    return 0;
+    ExitThread(0);
 }
 
 static DWORD WINAPI tcp_listener_thread( LPVOID lpParameter )
@@ -116,8 +145,6 @@ static DWORD WINAPI tcp_listener_thread( LPVOID lpParameter )
     int clientAddrSize;
     int ret;
 
-    listener->is_running = TRUE;
-
     TRACE( "listening on port %d\n", ntohs(listener->addr.sin_port) );
 
     for ( ;; )
@@ -127,9 +154,17 @@ static DWORD WINAPI tcp_listener_thread( LPVOID lpParameter )
         /* Waiting for clients */
         clientSock = accept( listener->sock, (LPSOCKADDR) &clientAddr,
                              &clientAddrSize );
+        ERR(">>>>>>>>mindfuck\n");
         if ( clientSock == INVALID_SOCKET )
         {
-            ERR( "accept() failed: %d\n", WSAGetLastError() );
+            if ( WSAGetLastError() == WSAEBADF )
+            {
+                TRACE( "TCP listener terminated\n" );
+            }
+            else
+            {
+                ERR( "accept() failed: %d\n", WSAGetLastError() );
+            }
             break;
         }
 
@@ -174,8 +209,7 @@ static DWORD WINAPI tcp_listener_thread( LPVOID lpParameter )
         }
     }
 
-    listener->is_running = FALSE;
-    return 0;
+    ExitThread(0);
 }
 
 static HRESULT start_dplaysrv( LPDPWS_DATA dpwsData )
@@ -183,7 +217,7 @@ static HRESULT start_dplaysrv( LPDPWS_DATA dpwsData )
     LPDPWS_THREADDATA listener = &dpwsData->dplaysrv;
     int ret;
 
-    if ( listener->is_running )
+    if ( listener->handle )
     {
         TRACE( "Thread already started\n" );
         return DP_OK;
@@ -210,17 +244,28 @@ static HRESULT start_dplaysrv( LPDPWS_DATA dpwsData )
     listener->addr.sin_addr.s_addr = htonl(INADDR_ANY);
     listener->addr.sin_port = htons(DPWS_DPLAYSRV_PORT);
 
+    do
+    {
     ret = bind( listener->sock, (LPSOCKADDR) &listener->addr,
                 sizeof(listener->addr) );
     if ( ret == SOCKET_ERROR )
     {
         ERR( "bind() failed: %d\n", WSAGetLastError() );
-        return DPERR_GENERIC;
+        exit(1);
+        //return DPERR_GENERIC;
     }
+    }
+    while (ret == SOCKET_ERROR);
 
     /* Launch thread */
     listener->handle = CreateThread( NULL, 0, udp_listener_thread,
                                      listener, 0, NULL );
+    if ( !listener->handle )
+    {
+        ERR( "Couldn't start thread: %d\n", GetLastError() );
+        return DPERR_GENERIC;
+    }
+
     return DP_OK;
 }
 
@@ -233,7 +278,7 @@ static HRESULT start_listener( LPDPWS_DATA dpwsData, BOOL is_tcp )
                  ? &dpwsData->tcp_listener
                  : &dpwsData->udp_listener );
 
-    if ( listener->is_running )
+    if ( listener->handle )
     {
         TRACE( "[%s] Thread already started\n", is_tcp ? "TCP" : "UDP" );
         return DP_OK;
@@ -296,6 +341,12 @@ static HRESULT start_listener( LPDPWS_DATA dpwsData, BOOL is_tcp )
                                        ? tcp_listener_thread
                                        : udp_listener_thread ),
                                      listener, 0, NULL );
+    if ( !listener->handle )
+    {
+        ERR( "Couldn't start thread: %d\n", GetLastError() );
+        return DPERR_GENERIC;
+    }
+
     return DP_OK;
 }
 
@@ -437,7 +488,7 @@ static HRESULT WINAPI DPWSCB_EnumSessions( LPDPSP_ENUMSESSIONSDATA data )
     /* Start listener to get replies if it's not started yet.
      * This needs to be done before we build the local address,
      * otherwise we won't know in which port we're listening. */
-    if ( !dpwsData->tcp_listener.is_running )
+    if ( !dpwsData->tcp_listener.handle )
     {
         HRESULT hr = start_listener( dpwsData, TRUE );
         if ( FAILED(hr) )
@@ -571,7 +622,7 @@ static HRESULT WINAPI DPWSCB_CreatePlayer( LPDPSP_CREATEPLAYERDATA data )
     IDirectPlaySP_GetSPData( data->lpISP, (LPVOID*) &dpwsData, &dwDataSize,
                              DPGET_LOCAL );
 
-    if ( !dpwsData->tcp_listener.is_running )
+    if ( !dpwsData->tcp_listener.handle )
     {
         ERR( "TCP listener was not running\n" );
         return DPERR_GENERIC;
@@ -728,14 +779,25 @@ static HRESULT stop_listener(LPDPWS_THREADDATA listener)
 {
     int ret;
 
-    if ( listener->is_running )
+    if ( listener->sock )
     {
-        ret = closesocket( listener->sock );
+        ERR(">>>>>>FFFFFFFFFF\n");
+        ret = closesocket(listener->sock);
         if ( ret == SOCKET_ERROR )
         {
             ERR( "closesocket() failed %d\n", WSAGetLastError() );
-            return DPERR_GENERIC;
         }
+        listener->sock = INVALID_SOCKET;
+    }
+
+    if ( listener->handle )
+    {
+        ret = CloseHandle( listener->handle );
+        if ( ret == 0 )
+        {
+            ERR( "CloseHandle() failed %d\n", GetLastError() );
+        }
+        listener->handle = NULL;
     }
 
     return DP_OK;
